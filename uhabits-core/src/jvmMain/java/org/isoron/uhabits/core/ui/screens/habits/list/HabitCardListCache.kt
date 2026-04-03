@@ -146,7 +146,9 @@ class HabitCardListCache @Inject constructor(
 
     @get:Synchronized
     val subHabitCount: Int
-        get() = data.subHabits.sumOf { it.size }
+        get() = data.habitGroups.indices.sumOf { idx ->
+            if (data.habitGroups[idx].collapsed) 0 else data.subHabits[idx].size
+        }
 
     @get:Synchronized
     @set:Synchronized
@@ -400,13 +402,15 @@ class HabitCardListCache @Inject constructor(
                 val habitList = subHabits[idx]
                 position++
 
-                for ((hIdx, h) in habitList.withIndex()) {
-                    idToHabit[h.id] = h
-                    idToPosition[h.id] = position
-                    positionToHabit[position] = h
-                    positionTypes.add(SUB_HABIT)
-                    positionIndices.add(hIdx)
-                    position++
+                if (!hgr.collapsed) {
+                    for ((hIdx, h) in habitList.withIndex()) {
+                        idToHabit[h.id] = h
+                        idToPosition[h.id] = position
+                        positionToHabit[position] = h
+                        positionTypes.add(SUB_HABIT)
+                        positionIndices.add(hIdx)
+                        position++
+                    }
                 }
             }
         }
@@ -703,11 +707,13 @@ class HabitCardListCache @Inject constructor(
 
             data.habitGroups.add(idx, habitGroup)
             data.subHabits.add(prevIdx, habitList)
-            data.scores[id] = newData.scores[id]!!
+            data.scores[id] = newData.scores[id] ?: 0.0
+            val emptyCheckmarks = IntArray(checkmarkCount)
+            val emptyNotes = Array(checkmarkCount) { "" }
             for (h in habitList) {
-                data.scores[h.id] = newData.scores[h.id]!!
-                data.checkmarks[h.id] = newData.checkmarks[h.id]!!
-                data.notes[h.id] = newData.notes[h.id]!!
+                data.scores[h.id] = newData.scores[h.id] ?: 0.0
+                data.checkmarks[h.id] = newData.checkmarks[h.id] ?: emptyCheckmarks
+                data.notes[h.id] = newData.notes[h.id] ?: emptyNotes
             }
             data.rebuildPositions()
             listener.onItemInserted(position)
@@ -715,16 +721,15 @@ class HabitCardListCache @Inject constructor(
 
         @Synchronized
         private fun performUpdate(id: Long, position: Int) {
-            var unchanged = true
-            val oldScore = data.scores[id]!!
-            val newScore = newData.scores[id]!!
-            if (oldScore != newScore) unchanged = false
+            val oldScore = data.scores[id] ?: 0.0
+            val newScore = newData.scores[id] ?: return
+            var unchanged = oldScore == newScore
 
             if (data.positionTypes[position] != HABIT_GROUP) {
                 val oldCheckmarks = data.checkmarks[id]
-                val newCheckmarks = newData.checkmarks[id]!!
+                val newCheckmarks = newData.checkmarks[id] ?: return
                 val oldNoteIndicators = data.notes[id]
-                val newNoteIndicators = newData.notes[id]!!
+                val newNoteIndicators = newData.notes[id] ?: return
                 if (!oldCheckmarks.contentEquals(newCheckmarks)) unchanged = false
                 if (!oldNoteIndicators.contentEquals(newNoteIndicators)) unchanged = false
                 if (unchanged) return

@@ -38,7 +38,9 @@ class CollapseButtonView(
     override fun onClick(v: View) {
         collapsed = !collapsed
         habitGroup!!.collapsed = collapsed
-        (context as ListHabitsActivity).component.listHabitsMenu.behavior.onPreferencesChanged()
+        val activity = context as ListHabitsActivity
+        activity.appComponent.habitGroupList.update(habitGroup!!)
+        activity.adapter.refresh()
         invalidate()
     }
 

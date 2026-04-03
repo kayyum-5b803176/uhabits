@@ -44,6 +44,9 @@ class HabitGroupRecord {
     var archived: Int? = null
 
     @field:Column
+    var collapsed: Int? = null
+
+    @field:Column
     var id: Long? = null
 
     @field:Column
@@ -56,6 +59,7 @@ class HabitGroupRecord {
         highlight = 0
         color = model.color.paletteIndex
         archived = if (model.isArchived) 1 else 0
+        collapsed = if (model.collapsed) 1 else 0
         position = model.position
         question = model.question
         uuid = model.uuid
@@ -77,6 +81,7 @@ class HabitGroupRecord {
         habitGroup.question = question!!
         habitGroup.color = PaletteColor(color!!)
         habitGroup.isArchived = archived != 0
+        habitGroup.collapsed = collapsed != 0
         habitGroup.position = position!!
         habitGroup.uuid = uuid
         habitGroup.habitList.groupId = id
