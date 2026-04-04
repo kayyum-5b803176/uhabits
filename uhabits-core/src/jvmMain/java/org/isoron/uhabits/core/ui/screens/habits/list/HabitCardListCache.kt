@@ -78,12 +78,12 @@ class HabitCardListCache @Inject constructor(
 
     @Synchronized
     fun getCheckmarks(habitID: Long): IntArray {
-        return data.checkmarks[habitID]!!
+        return data.checkmarks[habitID] ?: IntArray(checkmarkCount)
     }
 
     @Synchronized
     fun getNotes(habitID: Long): Array<String> {
-        return data.notes[habitID]!!
+        return data.notes[habitID] ?: Array(checkmarkCount) { "" }
     }
 
     @Synchronized
@@ -125,16 +125,17 @@ class HabitCardListCache @Inject constructor(
 
     @Synchronized
     fun getIdByPosition(position: Int): Long? {
+        if (position < 0 || position >= data.positionTypes.size) return null
         return if (data.positionTypes[position] == STANDALONE_HABIT || data.positionTypes[position] == SUB_HABIT) {
-            data.positionToHabit[position]!!.id
+            data.positionToHabit[position]?.id
         } else {
-            data.positionToHabitGroup[position]!!.id
+            data.positionToHabitGroup[position]?.id
         }
     }
 
     @get:Synchronized
     val itemCount: Int
-        get() = habitCount + habitGroupCount + subHabitCount
+        get() = data.positionTypes.size
 
     @get:Synchronized
     val habitCount: Int
@@ -176,7 +177,7 @@ class HabitCardListCache @Inject constructor(
 
     @Synchronized
     fun getScore(id: Long): Double {
-        return data.scores[id]!!
+        return data.scores[id] ?: 0.0
     }
 
     @Synchronized
