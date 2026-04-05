@@ -60,7 +60,7 @@ open class CheckmarkWidget(
             } else {
                 entryState = habit.computedEntries.get(today).value
             }
-            percentage = habit.scores[today].value.toFloat()
+            percentage = 0f
             refresh()
         }
     }

@@ -97,17 +97,6 @@ data class Habit(
         var from = entries.lastOrNull()?.timestamp ?: today
         if (from.isNewerThan(to)) from = to
 
-        scores.recompute(
-            frequency = frequency,
-            isNumerical = isNumerical,
-            skipDays = skipDays,
-            numericalHabitType = targetType,
-            targetValue = targetValue,
-            computedEntries = computedEntries,
-            from = from,
-            to = to
-        )
-
         streaks.recompute(
             computedEntries,
             from,

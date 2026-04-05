@@ -139,12 +139,10 @@ class MemoryHabitList : HabitList {
         Order.BY_COLOR_ASC -> Comparator { h1, h2 -> h1.color.paletteIndex.compareTo(h2.color.paletteIndex) }
         Order.BY_COLOR_DESC -> Comparator { h1, h2 -> h2.color.paletteIndex.compareTo(h1.color.paletteIndex) }
         Order.BY_SCORE_DESC -> Comparator { h1, h2 ->
-            val today = getTodayWithOffset()
-            h1.scores[today].value.compareTo(h2.scores[today].value)
+            h1.virtualProgress.compareTo(h2.virtualProgress)
         }
         Order.BY_SCORE_ASC -> Comparator { h1, h2 ->
-            val today = getTodayWithOffset()
-            h2.scores[today].value.compareTo(h1.scores[today].value)
+            h2.virtualProgress.compareTo(h1.virtualProgress)
         }
         Order.BY_STATUS_DESC -> Comparator { h1, h2 ->
             if (h1.isCompletedToday() != h2.isCompletedToday()) {

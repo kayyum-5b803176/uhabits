@@ -145,16 +145,15 @@ class HabitCardListAdapter @Inject constructor(
         if (listView == null) return
         val habit = cache.getHabitByPosition(position)
         if (habit != null) {
-            val score = cache.getScore(habit.id!!)
+            val score = cache.getVirtualScore(habit.id!!)
             val checkmarks = cache.getCheckmarks(habit.id!!)
             val notes = cache.getNotes(habit.id!!)
             val selected = selectedHabits.contains(habit)
             listView!!.bindCardView(holder, habit, score, checkmarks, notes, selected)
         } else {
             val habitGroup = cache.getHabitGroupByPosition(position)
-            val score = cache.getScore(habitGroup!!.id!!)
-            val selected = selectedHabitGroups.contains(habitGroup)
-            listView!!.bindGroupCardView(holder, habitGroup, score, selected)
+            val selected = selectedHabitGroups.contains(habitGroup!!)
+            listView!!.bindGroupCardView(holder, habitGroup, 1.0, selected)
         }
     }
 

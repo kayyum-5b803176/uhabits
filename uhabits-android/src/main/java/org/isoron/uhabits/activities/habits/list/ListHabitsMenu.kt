@@ -74,12 +74,12 @@ class ListHabitsMenu @Inject constructor(
             HabitList.Order.BY_NAME_DESC -> sortName.icon = arrowUp
             HabitList.Order.BY_COLOR_ASC -> sortColor.icon = arrowDown
             HabitList.Order.BY_COLOR_DESC -> sortColor.icon = arrowUp
-            HabitList.Order.BY_SCORE_ASC -> sortScore.icon = arrowDown
-            HabitList.Order.BY_SCORE_DESC -> sortScore.icon = arrowUp
+            HabitList.Order.BY_SCORE_ASC,
+            HabitList.Order.BY_SCORE_DESC,
+            HabitList.Order.BY_VIRTUAL_PROGRESS -> sortScore.icon = arrowUp
             HabitList.Order.BY_STATUS_ASC -> sortStatus.icon = arrowDown
             HabitList.Order.BY_STATUS_DESC -> sortStatus.icon = arrowUp
             HabitList.Order.BY_POSITION -> sortManual.icon = arrowUp
-            HabitList.Order.BY_VIRTUAL_PROGRESS -> sortManual.icon = arrowUp
         }
     }
 

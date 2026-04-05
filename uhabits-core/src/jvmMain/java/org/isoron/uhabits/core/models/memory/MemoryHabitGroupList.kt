@@ -5,7 +5,6 @@ import org.isoron.uhabits.core.models.HabitGroupList
 import org.isoron.uhabits.core.models.HabitList.Order
 import org.isoron.uhabits.core.models.HabitMatcher
 import org.isoron.uhabits.core.models.ModelObservable
-import org.isoron.uhabits.core.utils.DateUtils.Companion.getTodayWithOffset
 import java.util.LinkedList
 import java.util.Objects
 
@@ -107,26 +106,22 @@ class MemoryHabitGroupList : HabitGroupList {
         Order.BY_COLOR_ASC -> Comparator { h1, h2 -> h1.color.paletteIndex.compareTo(h2.color.paletteIndex) }
         Order.BY_COLOR_DESC -> Comparator { h1, h2 -> h2.color.paletteIndex.compareTo(h1.color.paletteIndex) }
         Order.BY_SCORE_DESC -> Comparator { h1, h2 ->
-            val today = getTodayWithOffset()
-            h1.scores[today].value.compareTo(h2.scores[today].value)
+            h1.position.compareTo(h2.position)
         }
         Order.BY_SCORE_ASC -> Comparator { h1, h2 ->
-            val today = getTodayWithOffset()
-            h2.scores[today].value.compareTo(h1.scores[today].value)
+            h2.position.compareTo(h1.position)
         }
         Order.BY_STATUS_DESC -> Comparator { h1, h2 ->
             if (h1.isCompletedToday() != h2.isCompletedToday()) {
                 return@Comparator if (h1.isCompletedToday()) -1 else 1
             }
-            val today = getTodayWithOffset()
-            h2.scores[today].value.compareTo(h1.scores[today].value)
+            h1.position.compareTo(h2.position)
         }
         Order.BY_STATUS_ASC -> Comparator { h1, h2 ->
             if (h1.isCompletedToday() != h2.isCompletedToday()) {
                 return@Comparator if (h1.isCompletedToday()) 1 else -1
             }
-            val today = getTodayWithOffset()
-            h1.scores[today].value.compareTo(h2.scores[today].value)
+            h2.position.compareTo(h1.position)
         }
         // Groups don't have virtualProgress — fall back to position
         Order.BY_VIRTUAL_PROGRESS, Order.BY_POSITION -> Comparator { h1, h2 ->
@@ -187,7 +182,7 @@ class MemoryHabitGroupList : HabitGroupList {
     private fun throwIfHasParent() {
         check(parent == null) {
             "Filtered lists cannot be modified directly. " +
-                    "You should modify the parent list instead."
+                "You should modify the parent list instead."
         }
     }
 

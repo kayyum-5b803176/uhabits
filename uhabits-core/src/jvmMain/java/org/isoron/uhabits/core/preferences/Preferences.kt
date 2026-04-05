@@ -45,12 +45,12 @@ open class Preferences(private val storage: Storage) {
 
     var defaultPrimaryOrder: HabitList.Order
         get() {
-            val name = storage.getString("pref_default_order", "BY_POSITION")
+            val name = storage.getString("pref_default_order", "BY_VIRTUAL_PROGRESS")
             return try {
                 HabitList.Order.valueOf(name)
             } catch (e: IllegalArgumentException) {
-                defaultPrimaryOrder = HabitList.Order.BY_POSITION
-                HabitList.Order.BY_POSITION
+                defaultPrimaryOrder = HabitList.Order.BY_VIRTUAL_PROGRESS
+                HabitList.Order.BY_VIRTUAL_PROGRESS
             }
         }
         set(order) {

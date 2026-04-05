@@ -175,9 +175,35 @@ class HabitCardListCache @Inject constructor(
             refreshAllHabits()
         }
 
+    /**
+     * Returns a normalized [0,1] ring value based on virtualProgress relative
+     * to peers in the same scope (group siblings or all ungrouped numericals).
+     * 1.0 = most neglected (top). 0.0 = most caught up (bottom).
+     * All tied at 0 → all rings full (1.0).
+     * Non-numerical habits always return 1.0.
+     */
     @Synchronized
-    fun getScore(id: Long): Double {
-        return data.scores[id] ?: 0.0
+    fun getVirtualScore(id: Long): Double {
+        val habit = data.idToHabit[id] ?: return 1.0
+        if (!habit.isNumerical) return 1.0
+
+        val peers: List<Habit> = if (habit.groupId != null) {
+            val hgr = data.idToHabitGroup[habit.groupId] ?: return 1.0
+            val hgrIdx = data.habitGroups.indexOf(hgr)
+            if (hgrIdx < 0) return 1.0
+            data.subHabits[hgrIdx].filter { it.isNumerical }
+        } else {
+            data.habits.filter { it.isNumerical && it.groupId == null }
+        }
+
+        if (peers.size <= 1) return 1.0
+
+        val minVp = peers.minOf { it.virtualProgress }
+        val maxVp = peers.maxOf { it.virtualProgress }
+        val maxLag = maxVp - minVp
+        if (maxLag == 0.0) return 1.0
+
+        return (1.0 - (habit.virtualProgress - minVp) / maxLag).coerceIn(0.0, 1.0)
     }
 
     @Synchronized
@@ -310,7 +336,6 @@ class HabitCardListCache @Inject constructor(
         val positionToHabit: TreeMap<Int, Habit>
         val positionToHabitGroup: TreeMap<Int, HabitGroup>
         val checkmarks: HashMap<Long?, IntArray>
-        val scores: HashMap<Long?, Double>
         val notes: HashMap<Long?, Array<String>>
 
         @Synchronized
@@ -335,26 +360,6 @@ class HabitCardListCache @Inject constructor(
                         oldData.notes[id]!!
                 } else {
                     notes[id] = empty
-                }
-            }
-        }
-
-        @Synchronized
-        fun copyScoresFrom(oldData: CacheData) {
-            for (id in idToHabit.keys) {
-                if (oldData.scores.containsKey(id)) {
-                    scores[id] =
-                        oldData.scores[id]!!
-                } else {
-                    scores[id] = 0.0
-                }
-            }
-            for (id in idToHabitGroup.keys) {
-                if (oldData.scores.containsKey(id)) {
-                    scores[id] =
-                        oldData.scores[id]!!
-                } else {
-                    scores[id] = 0.0
                 }
             }
         }
@@ -556,7 +561,6 @@ class HabitCardListCache @Inject constructor(
             idToPosition.remove(id)
             idToHabit.remove(id)
             idToHabitGroup.remove(id)
-            scores.remove(id)
             notes.remove(id)
             checkmarks.remove(id)
         }
@@ -567,9 +571,6 @@ class HabitCardListCache @Inject constructor(
             positionToHabit.remove(pos)
         }
 
-        /**
-         * Creates a new CacheData without any content.
-         */
         init {
             habits = LinkedList()
             habitGroups = LinkedList()
@@ -580,7 +581,6 @@ class HabitCardListCache @Inject constructor(
             positionToHabit = TreeMap()
             positionToHabitGroup = TreeMap()
             checkmarks = HashMap()
-            scores = HashMap()
             notes = HashMap()
         }
     }
@@ -616,7 +616,6 @@ class HabitCardListCache @Inject constructor(
             if (targetID != null) {
                 val habit = data.idToHabit[targetID] ?: return
                 val skipDays = habit.skipDays
-                data.scores[targetID] = habit.scores[today].value
                 val entries = habit.computedEntries.getByInterval(dateFrom, today, skipDays)
                 data.checkmarks[targetID] = IntArray(entries.size) { entries[it].value }
                 data.notes[targetID] = Array(entries.size) { entries[it].notes }
@@ -626,7 +625,6 @@ class HabitCardListCache @Inject constructor(
 
             newData.fetchHabits()
             newData.rebuildPositions()
-            newData.copyScoresFrom(data)
             newData.copyCheckmarksFrom(data)
             newData.copyNoteIndicatorsFrom(data)
             if (runner != null) runner!!.publishProgress(this, -1)
@@ -634,15 +632,12 @@ class HabitCardListCache @Inject constructor(
                 if (isCancelled) return
                 if (type == STANDALONE_HABIT || type == SUB_HABIT) {
                     val habit = newData.positionToHabit[position]!!
-                    newData.scores[habit.id] = habit.scores[today].value
                     val skipDays = habit.skipDays
                     val entries = habit.computedEntries.getByInterval(dateFrom, today, skipDays)
                     newData.checkmarks[habit.id] = IntArray(entries.size) { entries[it].value }
                     newData.notes[habit.id] = Array(entries.size) { entries[it].notes }
                     runner!!.publishProgress(this, position)
                 } else if (type == HABIT_GROUP) {
-                    val habitGroup = newData.positionToHabitGroup[position]!!
-                    newData.scores[habitGroup.id] = habitGroup.scores[today].value
                     runner!!.publishProgress(this, position)
                 }
             }
@@ -688,7 +683,6 @@ class HabitCardListCache @Inject constructor(
             data.positionToHabit[position] = habit
             data.idToPosition[id] = position
             data.idToHabit[id] = habit
-            data.scores[id] = newData.scores[id]!!
             data.checkmarks[id] = newData.checkmarks[id]!!
             data.notes[id] = newData.notes[id]!!
             listener.onItemInserted(position)
@@ -708,11 +702,9 @@ class HabitCardListCache @Inject constructor(
 
             data.habitGroups.add(idx, habitGroup)
             data.subHabits.add(prevIdx, habitList)
-            data.scores[id] = newData.scores[id] ?: 0.0
             val emptyCheckmarks = IntArray(checkmarkCount)
             val emptyNotes = Array(checkmarkCount) { "" }
             for (h in habitList) {
-                data.scores[h.id] = newData.scores[h.id] ?: 0.0
                 data.checkmarks[h.id] = newData.checkmarks[h.id] ?: emptyCheckmarks
                 data.notes[h.id] = newData.notes[h.id] ?: emptyNotes
             }
@@ -722,24 +714,17 @@ class HabitCardListCache @Inject constructor(
 
         @Synchronized
         private fun performUpdate(id: Long, position: Int) {
-            val oldScore = data.scores[id] ?: 0.0
-            val newScore = newData.scores[id] ?: return
-            var unchanged = oldScore == newScore
-
-            if (data.positionTypes[position] != HABIT_GROUP) {
-                val oldCheckmarks = data.checkmarks[id]
-                val newCheckmarks = newData.checkmarks[id] ?: return
-                val oldNoteIndicators = data.notes[id]
-                val newNoteIndicators = newData.notes[id] ?: return
-                if (!oldCheckmarks.contentEquals(newCheckmarks)) unchanged = false
-                if (!oldNoteIndicators.contentEquals(newNoteIndicators)) unchanged = false
-                if (unchanged) return
-                data.checkmarks[id] = newCheckmarks
-                data.notes[id] = newNoteIndicators
+            if (data.positionTypes[position] == HABIT_GROUP) {
+                listener.onItemChanged(position)
+                return
             }
-
-            if (unchanged) return
-            data.scores[id] = newScore
+            val oldCheckmarks = data.checkmarks[id]
+            val newCheckmarks = newData.checkmarks[id] ?: return
+            val oldNotes = data.notes[id]
+            val newNotes = newData.notes[id] ?: return
+            if (oldCheckmarks.contentEquals(newCheckmarks) && oldNotes.contentEquals(newNotes)) return
+            data.checkmarks[id] = newCheckmarks
+            data.notes[id] = newNotes
             listener.onItemChanged(position)
         }
 

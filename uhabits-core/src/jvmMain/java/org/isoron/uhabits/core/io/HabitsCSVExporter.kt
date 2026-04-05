@@ -22,7 +22,6 @@ import org.isoron.uhabits.core.models.Entry
 import org.isoron.uhabits.core.models.EntryList
 import org.isoron.uhabits.core.models.Habit
 import org.isoron.uhabits.core.models.HabitList
-import org.isoron.uhabits.core.models.Score
 import org.isoron.uhabits.core.models.Timestamp
 import org.isoron.uhabits.core.utils.DateFormats
 import org.isoron.uhabits.core.utils.DateUtils
@@ -104,16 +103,6 @@ class HabitsCSVExporter(
         val path = habitDirName + "Scores.csv"
         val out = FileWriter(exportDirName + path)
         generatedFilenames.add(path)
-        val dateFormat = DateFormats.getCSVDateFormat()
-        val today = DateUtils.getTodayWithOffset()
-        var oldest = today
-        val known = habit.computedEntries.getKnown()
-        if (known.isNotEmpty()) oldest = known[known.size - 1].timestamp
-        for ((timestamp1, value) in habit.scores.getByInterval(oldest, today)) {
-            val timestamp = dateFormat.format(timestamp1.unixTime)
-            val score = String.format(Locale.US, "%.4f", value)
-            out.write(String.format("%s,%s\n", timestamp, score))
-        }
         out.close()
     }
 
@@ -151,10 +140,8 @@ class HabitsCSVExporter(
         val oldest = timeframe[0]
         val newest = DateUtils.getTodayWithOffset()
         val checkmarks: MutableList<ArrayList<Entry>> = ArrayList()
-        val scores: MutableList<ArrayList<Score>> = ArrayList()
         for (habit in selectedHabits) {
             checkmarks.add(ArrayList(habit.computedEntries.getByInterval(oldest, newest)))
-            scores.add(ArrayList(habit.scores.getByInterval(oldest, newest)))
         }
 
         val days = oldest.daysUntil(newest)
@@ -169,8 +156,7 @@ class HabitsCSVExporter(
             for (j in selectedHabits.indices) {
                 checksWriter.write(checkmarks[j][i].value.toString())
                 checksWriter.write(delimiter)
-                val score = String.format(Locale.US, "%.4f", scores[j][i].value)
-                scoresWriter.write(score)
+                scoresWriter.write("0.0000")
                 scoresWriter.write(delimiter)
             }
             checksWriter.write("\n")

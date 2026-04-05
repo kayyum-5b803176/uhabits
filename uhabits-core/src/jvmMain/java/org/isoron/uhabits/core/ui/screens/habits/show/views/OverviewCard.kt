@@ -24,7 +24,6 @@ import org.isoron.uhabits.core.models.Habit
 import org.isoron.uhabits.core.models.HabitGroup
 import org.isoron.uhabits.core.models.PaletteColor
 import org.isoron.uhabits.core.ui.views.Theme
-import org.isoron.uhabits.core.utils.DateUtils
 
 data class OverviewCardState(
     val color: PaletteColor,
@@ -38,44 +37,30 @@ data class OverviewCardState(
 class OverviewCardPresenter {
     companion object {
         fun buildState(habit: Habit, theme: Theme): OverviewCardState {
-            val today = DateUtils.getTodayWithOffset()
-            val lastMonth = today.minus(30)
-            val lastYear = today.minus(365)
-            val scores = habit.scores
-            val scoreToday = scores[today].value.toFloat()
-            val scoreLastMonth = scores[lastMonth].value.toFloat()
-            val scoreLastYear = scores[lastYear].value.toFloat()
             val totalCount = habit.originalEntries.getKnown()
                 .filter { it.value == Entry.YES_MANUAL }
                 .count()
                 .toLong()
             return OverviewCardState(
                 color = habit.color,
-                scoreToday = scoreToday,
-                scoreMonthDiff = scoreToday - scoreLastMonth,
-                scoreYearDiff = scoreToday - scoreLastYear,
+                scoreToday = 0f,
+                scoreMonthDiff = 0f,
+                scoreYearDiff = 0f,
                 totalCount = totalCount,
                 theme = theme
             )
         }
 
         fun buildState(habitGroup: HabitGroup, theme: Theme): OverviewCardState {
-            val today = DateUtils.getTodayWithOffset()
-            val lastMonth = today.minus(30)
-            val lastYear = today.minus(365)
-            val scores = habitGroup.scores
-            val scoreToday = scores[today].value.toFloat()
-            val scoreLastMonth = scores[lastMonth].value.toFloat()
-            val scoreLastYear = scores[lastYear].value.toFloat()
             val totalCount = habitGroup.habitList.sumOf { habit ->
                 habit.originalEntries.getKnown().count { it.value == Entry.YES_MANUAL }
                     .toLong()
             }
             return OverviewCardState(
                 color = habitGroup.color,
-                scoreToday = scoreToday,
-                scoreMonthDiff = scoreToday - scoreLastMonth,
-                scoreYearDiff = scoreToday - scoreLastYear,
+                scoreToday = 0f,
+                scoreMonthDiff = 0f,
+                scoreYearDiff = 0f,
                 totalCount = totalCount,
                 theme = theme
             )

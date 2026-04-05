@@ -70,7 +70,7 @@ class ListHabitsMenuBehavior @Inject constructor(
     }
 
     fun onSortByScore() {
-        onSortToggleBy(HabitList.Order.BY_SCORE_DESC, HabitList.Order.BY_SCORE_ASC)
+        onSortToggleBy(HabitList.Order.BY_VIRTUAL_PROGRESS, HabitList.Order.BY_VIRTUAL_PROGRESS)
     }
 
     fun onSortByName() {

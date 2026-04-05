@@ -58,28 +58,10 @@ class ScoreCardPresenter(
             spinnerPosition: Int,
             theme: Theme
         ): ScoreCardState {
-            val bucketSize = BUCKET_SIZES[spinnerPosition]
-            val today = DateUtils.getTodayWithOffset()
-            val oldest = habit.computedEntries.getKnown().lastOrNull()?.timestamp ?: today
-
-            val field = getTruncateField(bucketSize)
-            val scores = habit.scores.getByInterval(oldest, today).groupBy {
-                DateUtils.truncate(field, it.timestamp, firstWeekday)
-            }.map { (timestamp, scores) ->
-                Score(
-                    timestamp,
-                    scores.map {
-                        it.value
-                    }.average()
-                )
-            }.sortedBy {
-                it.timestamp
-            }.reversed()
-
             return ScoreCardState(
                 color = habit.color,
-                scores = scores,
-                bucketSize = bucketSize,
+                scores = emptyList(),
+                bucketSize = BUCKET_SIZES[spinnerPosition],
                 spinnerPosition = spinnerPosition,
                 theme = theme
             )
@@ -91,34 +73,10 @@ class ScoreCardPresenter(
             spinnerPosition: Int,
             theme: Theme
         ): ScoreCardState {
-            val bucketSize = BUCKET_SIZES[spinnerPosition]
-            val today = DateUtils.getTodayWithOffset()
-            val oldest = if (habitGroup.habitList.isEmpty) {
-                today
-            } else {
-                habitGroup.habitList.minOf {
-                    it.computedEntries.getKnown().lastOrNull()?.timestamp ?: today
-                }
-            }
-
-            val field = getTruncateField(bucketSize)
-            val scores = habitGroup.scores.getByInterval(oldest, today).groupBy {
-                DateUtils.truncate(field, it.timestamp, firstWeekday)
-            }.map { (timestamp, scores) ->
-                Score(
-                    timestamp,
-                    scores.map {
-                        it.value
-                    }.average()
-                )
-            }.sortedBy {
-                it.timestamp
-            }.reversed()
-
             return ScoreCardState(
                 color = habitGroup.color,
-                scores = scores,
-                bucketSize = bucketSize,
+                scores = emptyList(),
+                bucketSize = BUCKET_SIZES[spinnerPosition],
                 spinnerPosition = spinnerPosition,
                 theme = theme
             )

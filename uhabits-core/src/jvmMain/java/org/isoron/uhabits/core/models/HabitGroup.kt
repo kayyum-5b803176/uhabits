@@ -87,12 +87,6 @@ data class HabitGroup(
         var from = firstEntryDate()
         if (from.isNewerThan(to)) from = to
 
-        scores.combineFrom(
-            habitList = habitList,
-            from = from,
-            to = to
-        )
-
         streaks.combineFrom(
             habitList = habitList,
             from = from,
