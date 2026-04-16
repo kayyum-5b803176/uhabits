@@ -78,6 +78,8 @@ android {
 
         getByName("debug") {
             isTestCoverageEnabled = true
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug" // optional but useful
         }
     }
 
