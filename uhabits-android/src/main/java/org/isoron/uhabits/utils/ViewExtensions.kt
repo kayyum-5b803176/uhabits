@@ -119,7 +119,7 @@ fun Activity.showMessage(msg: String) {
 
 fun Activity.showSendFileScreen(archiveFilename: String) {
     val file = File(archiveFilename)
-    val fileUri = FileProvider.getUriForFile(this, "org.isoron.uhabits", file)
+    val fileUri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
     this.startActivitySafely(
         Intent().apply {
             action = Intent.ACTION_SEND

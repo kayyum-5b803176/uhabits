@@ -312,7 +312,7 @@
 
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="org.isoron.uhabits"
+            android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
