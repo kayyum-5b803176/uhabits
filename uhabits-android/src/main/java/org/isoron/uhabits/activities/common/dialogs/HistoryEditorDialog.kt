@@ -56,7 +56,14 @@ class HistoryEditorDialog : AppCompatDialogFragment(), CommandRunner.Listener {
         clearCurrentDialog()
         val component = (requireActivity().application as HabitsApplication).component
         commandRunner = component.commandRunner
-        habit = component.habitList.getById(requireArguments().getLong("habit"))!!
+        val habitId = requireArguments().getLong("habit")
+        val foundHabit = component.habitList.getById(habitId)
+            ?: component.habitGroupList.getHabitByID(habitId)
+        if (foundHabit == null) {
+            dismiss()
+            return Dialog(requireContext())
+        }
+        habit = foundHabit
         preferences = component.preferences
 
         val themeSwitcher = AndroidThemeSwitcher(requireActivity(), preferences)
@@ -95,11 +102,13 @@ class HistoryEditorDialog : AppCompatDialogFragment(), CommandRunner.Listener {
 
     override fun onResume() {
         super.onResume()
+        if (!::habit.isInitialized) return
         commandRunner.addListener(this)
         refreshData()
     }
 
     override fun onPause() {
+        if (!::commandRunner.isInitialized) return
         commandRunner.removeListener(this)
         super.onPause()
     }
@@ -122,6 +131,7 @@ class HistoryEditorDialog : AppCompatDialogFragment(), CommandRunner.Listener {
     }
 
     override fun onCommandFinished(command: Command) {
+        if (!::habit.isInitialized) return
         val msg = getExecuteString(command)
         if (msg != null) (dataView as View).showMessage(msg)
         refreshData()
