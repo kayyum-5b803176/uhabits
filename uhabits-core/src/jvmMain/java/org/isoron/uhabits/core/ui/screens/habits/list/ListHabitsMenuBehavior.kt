@@ -65,7 +65,7 @@ class ListHabitsMenuBehavior @Inject constructor(
     fun onToggleGreyCompleted() {
         greyCompleted = !greyCompleted
         preferences.greyCompleted = greyCompleted
-        screen.applyTheme()
+        adapter.refresh()
     }
 
     fun onSortByManually() {

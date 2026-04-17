@@ -71,7 +71,6 @@ android {
         getByName("release") {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.txt")
-            signingConfig = signingConfigs.getByName("debug")
             if (signingConfigs.findByName("release") != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -138,7 +137,6 @@ dependencies {
     implementation("androidx.legacy:legacy-support-v4:1.0.0")
     implementation("com.google.android.material:material:1.11.0")
     implementation("com.opencsv:opencsv:5.9")
-    implementation("nl.dionsegijn:konfetti-xml:2.0.2")
     implementation(project(":uhabits-core"))
     kapt("com.google.dagger:dagger-compiler:$daggerVersion")
     kaptAndroidTest("com.google.dagger:dagger-compiler:$daggerVersion")

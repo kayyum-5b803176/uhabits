@@ -78,7 +78,7 @@ open class ListHabitsBehavior @Inject constructor(
                         (habit.targetType == AT_LEAST && newValue >= habit.targetValue) ||
                         (habit.targetType == AT_MOST && newValue <= habit.targetValue)
                     ) {
-                        screen.showConfetti(habit.color, x, y)
+                        // confetti removed
                     }
                 }
                 commandRunner.run(CreateRepetitionCommand(list, habit, timestamp, value, newNotes))
@@ -90,7 +90,6 @@ open class ListHabitsBehavior @Inject constructor(
                 entry.notes,
                 habit.color
             ) { newValue: Int, newNotes: String, x: Float, y: Float ->
-                if (newValue != entry.value && newValue == YES_MANUAL) screen.showConfetti(habit.color, x, y)
                 commandRunner.run(CreateRepetitionCommand(list, habit, timestamp, newValue, newNotes))
                 commandRunner.run(RefreshParentGroupCommand(habit, habitGroupList))
             }
@@ -165,7 +164,6 @@ open class ListHabitsBehavior @Inject constructor(
             commandRunner.run(
                 RefreshParentGroupCommand(habit, habitGroupList)
             )
-            if (value == YES_MANUAL) screen.showConfetti(habit.color, x, y)
         }
     }
 

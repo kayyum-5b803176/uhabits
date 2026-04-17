@@ -25,9 +25,6 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import dagger.Lazy
-import nl.dionsegijn.konfetti.core.Party
-import nl.dionsegijn.konfetti.core.Position
-import nl.dionsegijn.konfetti.core.emitter.Emitter
 import org.isoron.platform.gui.toInt
 import org.isoron.uhabits.R
 import org.isoron.uhabits.activities.common.dialogs.CheckmarkDialog
@@ -69,7 +66,6 @@ import org.isoron.uhabits.intents.IntentFactory
 import org.isoron.uhabits.tasks.ExportDBTaskFactory
 import org.isoron.uhabits.tasks.ImportDataTask
 import org.isoron.uhabits.tasks.ImportDataTaskFactory
-import org.isoron.uhabits.utils.ColorUtils
 import org.isoron.uhabits.utils.copyTo
 import org.isoron.uhabits.utils.currentTheme
 import org.isoron.uhabits.utils.dismissCurrentAndShow
@@ -79,7 +75,6 @@ import org.isoron.uhabits.utils.showSendEmailScreen
 import org.isoron.uhabits.utils.showSendFileScreen
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 const val RESULT_IMPORT_DATA = 101
@@ -242,25 +237,7 @@ class ListHabitsScreen
     }
 
     override fun showConfetti(color: PaletteColor, x: Float, y: Float) {
-        val baseColor = themeSwitcher.currentTheme!!.color(color).toInt()
-        rootView.get().konfettiView.start(
-            Party(
-                speed = 0f,
-                maxSpeed = 16f,
-                damping = 0.9f,
-                spread = 360,
-                angle = 0,
-                colors = listOf(
-                    ColorUtils.changeHue(baseColor, 180f),
-                    ColorUtils.changeHue(baseColor, 20f),
-                    ColorUtils.changeHue(baseColor, -20f),
-                    baseColor
-                ),
-                position = Position.Absolute(x, y),
-                emitter = Emitter(duration = 25, TimeUnit.MILLISECONDS).max(25),
-                timeToLive = 0
-            )
-        )
+        // confetti removed
     }
 
     override fun showSettingsScreen() {
