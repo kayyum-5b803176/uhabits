@@ -66,13 +66,29 @@ data class Habit(
 
     fun isCompletedToday(): Boolean {
         val today = DateUtils.getTodayWithOffset()
-        val value = computedEntries.get(today).value
         return if (isNumerical) {
-            when (targetType) {
-                NumericalHabitType.AT_LEAST -> value / 1000.0 >= targetValue
-                NumericalHabitType.AT_MOST -> value != Entry.UNKNOWN && value / 1000.0 <= targetValue
+            val denominator = frequency.denominator
+            if (denominator <= 1) {
+                // Daily: check today's single entry as before
+                val value = computedEntries.get(today).value
+                when (targetType) {
+                    NumericalHabitType.AT_LEAST -> value / 1000.0 >= targetValue
+                    NumericalHabitType.AT_MOST -> value != Entry.UNKNOWN && value / 1000.0 <= targetValue
+                }
+            } else {
+                // Non-daily: sum moving window of [denominator] days and compare to target
+                val from = today.minus(denominator - 1)
+                val entries = computedEntries.getByInterval(from, today)
+                val windowSum = entries.sumOf { entry ->
+                    if (entry.value == Entry.SKIP) 0 else maxOf(0, entry.value)
+                } / 1000.0
+                when (targetType) {
+                    NumericalHabitType.AT_LEAST -> windowSum >= targetValue
+                    NumericalHabitType.AT_MOST -> windowSum > 0 && windowSum <= targetValue
+                }
             }
         } else {
+            val value = computedEntries.get(today).value
             value != Entry.NO && value != Entry.UNKNOWN
         }
     }

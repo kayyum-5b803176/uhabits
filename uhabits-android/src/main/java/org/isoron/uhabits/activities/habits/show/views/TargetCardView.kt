@@ -45,7 +45,6 @@ class TargetCardView(context: Context, attrs: AttributeSet) : LinearLayout(conte
             1 -> resources.getString(R.string.today)
             7 -> resources.getString(R.string.week)
             30 -> resources.getString(R.string.month)
-            91 -> resources.getString(R.string.quarter)
             else -> resources.getString(R.string.year)
         }
     }
