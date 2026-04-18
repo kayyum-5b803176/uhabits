@@ -32,8 +32,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat.checkSelfPermission
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import androidx.appcompat.app.AlertDialog
+import android.widget.EditText
+import android.text.InputType
+import org.isoron.uhabits.activities.habits.list.tabs.TabManager
 import org.isoron.uhabits.BaseExceptionHandler
 import org.isoron.uhabits.HabitsApplication
+import org.isoron.uhabits.R
 import org.isoron.uhabits.activities.habits.list.views.HabitCardListAdapter
 import org.isoron.uhabits.core.models.Timestamp
 import org.isoron.uhabits.core.preferences.Preferences
@@ -60,6 +65,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
     lateinit var screen: ListHabitsScreen
     lateinit var prefs: Preferences
     lateinit var midnightTimer: MidnightTimer
+    lateinit var tabManager: TabManager
     private val scope = CoroutineScope(Dispatchers.Main)
 
     private var permissionAlreadyRequested = false
@@ -102,6 +108,13 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
         Thread.setDefaultUncaughtExceptionHandler(BaseExceptionHandler(this))
         component.listHabitsBehavior.onStartup()
         rootView.applyRootViewInsets()
+
+        // ---- Tab feature ----
+        tabManager = TabManager(this)
+        setupTabBar()
+        setupAddToTabCallback()
+        // ---------------------
+
         setContentView(rootView)
     }
 
@@ -155,6 +168,130 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
 
     private fun scheduleReminders() {
         appComponent.reminderScheduler.scheduleAll()
+    }
+
+    // -----------------------------------------------------------------------
+    // Tab bar
+    // -----------------------------------------------------------------------
+
+    /**
+     * Binds [TabBarView.listener] on [rootView.tabBar] to [tabManager].
+     * Called once in [onCreate].
+     */
+    private fun setupTabBar() {
+        rootView.tabBar.setTabs(tabManager.getAllTabs())
+
+        rootView.tabBar.listener = object : org.isoron.uhabits.activities.habits.list.tabs.TabBarView.Listener {
+
+            override fun onTabSelected(tabId: String?) {
+                adapter.tabFilter = if (tabId == null) null
+                else tabManager.getTab(tabId)?.habitIds?.toSet()
+            }
+
+            override fun onTabCreated(name: String) {
+                val tab = tabManager.addTab(name)
+                rootView.tabBar.setTabs(tabManager.getAllTabs())
+                // Auto-select the newly created tab
+                rootView.tabBar.setSelectedTab(tab.id)
+                adapter.tabFilter = tab.habitIds.toSet()
+            }
+
+            override fun onTabRenamed(tabId: String, newName: String) {
+                tabManager.renameTab(tabId, newName)
+                rootView.tabBar.setTabs(tabManager.getAllTabs())
+            }
+
+            override fun onTabDeleted(tabId: String) {
+                tabManager.deleteTab(tabId)
+                // Fall back to "All" so we never show an orphaned filter
+                adapter.tabFilter = null
+                rootView.tabBar.setTabs(tabManager.getAllTabs())
+            }
+        }
+    }
+
+    /**
+     * Shows a dialog letting the user pick (or create) a tab, then adds every
+     * selected habit to that tab.
+     *
+     * The callback is invoked from [ListHabitsSelectionMenu] when the user
+     * taps "Add to tab" in the contextual action bar.
+     */
+    private fun setupAddToTabCallback() {
+        component.listHabitsSelectionMenu.addToTabCallback = { habitIds ->
+            showAddToTabDialog(habitIds)
+        }
+    }
+
+    private fun showAddToTabDialog(habitIds: List<Long>) {
+        val tabs = tabManager.getAllTabs()
+
+        if (tabs.isEmpty()) {
+            // No tabs yet – prompt to create one first
+            val input = EditText(this).apply {
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                hint = getString(R.string.tab_name_hint)
+                val p = (16 * resources.displayMetrics.density).toInt()
+                setPadding(p, p / 2, p, p / 2)
+            }
+            AlertDialog.Builder(this)
+                .setTitle(getString(R.string.tab_create_title))
+                .setView(input)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    val name = input.text.toString().trim()
+                    if (name.isNotEmpty()) {
+                        val tab = tabManager.addTab(name)
+                        habitIds.forEach { tabManager.addHabitToTab(it, tab.id) }
+                        refreshTabBarAndFilter(tab.id)
+                    }
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        } else {
+            // Show existing tabs + a "New tab…" entry at the end
+            val labels = tabs.map { it.name }.toMutableList()
+            labels.add(getString(R.string.tab_create_title) + "…")
+
+            AlertDialog.Builder(this)
+                .setTitle(getString(R.string.add_to_tab))
+                .setItems(labels.toTypedArray()) { _, which ->
+                    if (which < tabs.size) {
+                        // Existing tab selected
+                        val tab = tabs[which]
+                        habitIds.forEach { tabManager.addHabitToTab(it, tab.id) }
+                        refreshTabBarAndFilter(tab.id)
+                    } else {
+                        // "New tab…" selected – ask for a name first
+                        val input = EditText(this).apply {
+                            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                            hint = getString(R.string.tab_name_hint)
+                            val p = (16 * resources.displayMetrics.density).toInt()
+                            setPadding(p, p / 2, p, p / 2)
+                        }
+                        AlertDialog.Builder(this)
+                            .setTitle(getString(R.string.tab_create_title))
+                            .setView(input)
+                            .setPositiveButton(android.R.string.ok) { _, _ ->
+                                val name = input.text.toString().trim()
+                                if (name.isNotEmpty()) {
+                                    val tab = tabManager.addTab(name)
+                                    habitIds.forEach { tabManager.addHabitToTab(it, tab.id) }
+                                    refreshTabBarAndFilter(tab.id)
+                                }
+                            }
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .show()
+                    }
+                }
+                .show()
+        }
+    }
+
+    /** Refreshes the tab bar chips and switches the active filter to [tabId]. */
+    private fun refreshTabBarAndFilter(tabId: String) {
+        rootView.tabBar.setTabs(tabManager.getAllTabs())
+        rootView.tabBar.setSelectedTab(tabId)
+        adapter.tabFilter = tabManager.getTab(tabId)?.habitIds?.toSet()
     }
 
     override fun onCreateOptionsMenu(m: Menu): Boolean {

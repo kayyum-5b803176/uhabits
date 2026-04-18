@@ -36,6 +36,14 @@ import org.isoron.uhabits.inject.ActivityScope
 import java.util.LinkedList
 import javax.inject.Inject
 
+// ---------------------------------------------------------------------------
+// Tab-filter position mapping
+// ---------------------------------------------------------------------------
+// When a tab filter is active, `filteredPositions` holds the subset of real
+// cache indices that match the tab's habitIds. All public position-based APIs
+// translate through virtualToReal() before delegating to the cache.
+// When no filter is active (tabFilter == null), virtualToReal() is a no-op.
+
 /**
  * Provides data that backs a [HabitCardListView].
  *
@@ -43,6 +51,7 @@ import javax.inject.Inject
  * The data is fetched and cached by a [HabitCardListCache]. This adapter
  * also holds a list of items that have been selected.
  */
+@SuppressLint("NotifyDataSetChanged")
 @ActivityScope
 class HabitCardListAdapter @Inject constructor(
     private val cache: HabitCardListCache,
@@ -57,6 +66,49 @@ class HabitCardListAdapter @Inject constructor(
     private var listView: HabitCardListView? = null
     val selectedHabits: LinkedList<Habit> = LinkedList()
     val selectedHabitGroups: LinkedList<HabitGroup> = LinkedList()
+
+    // ------------------------------------------------------------------
+    // Tab filter
+    // ------------------------------------------------------------------
+
+    /**
+     * When non-null, only habits whose id is in this set are shown.
+     * Setting this triggers a full position rebuild and a dataset refresh.
+     */
+    @SuppressLint("NotifyDataSetChanged")
+    var tabFilter: Set<Long>? = null
+        set(value) {
+            field = value
+            rebuildFilteredPositions()
+            notifyDataSetChanged()
+            observable.notifyListeners()
+        }
+
+    /** Sorted list of real cache positions that survive the active tab filter. */
+    private var filteredPositions: List<Int> = emptyList()
+
+    /**
+     * Rebuilds [filteredPositions] from the current cache state and active
+     * [tabFilter]. Must be called whenever the cache changes while a filter is
+     * active, or whenever [tabFilter] itself changes.
+     */
+    private fun rebuildFilteredPositions() {
+        val filter = tabFilter
+        if (filter == null) {
+            filteredPositions = emptyList()
+            return
+        }
+        val result = mutableListOf<Int>()
+        for (i in 0 until cache.itemCount) {
+            val id = cache.getIdByPosition(i)
+            if (id != null && filter.contains(id)) result.add(i)
+        }
+        filteredPositions = result
+    }
+
+    /** Translates a virtual (filtered) position to a real cache position. */
+    private fun virtualToReal(virtualPos: Int): Int =
+        if (tabFilter == null) virtualPos else filteredPositions[virtualPos]
 
     override fun atMidnight() {
         cache.refreshAllHabits()
@@ -112,12 +164,11 @@ class HabitCardListAdapter @Inject constructor(
         return cache.getHabitGroupByPosition(position)
     }
 
-    override fun getItemCount(): Int {
-        return cache.itemCount
-    }
+    override fun getItemCount(): Int =
+        if (tabFilter == null) cache.itemCount else filteredPositions.size
 
     override fun getItemId(position: Int): Long {
-        return cache.getIdByPosition(position)!!
+        return cache.getIdByPosition(virtualToReal(position))!!
     }
 
     /**
@@ -143,7 +194,8 @@ class HabitCardListAdapter @Inject constructor(
         position: Int
     ) {
         if (listView == null) return
-        val habit = cache.getHabitByPosition(position)
+        val realPos = virtualToReal(position)
+        val habit = cache.getHabitByPosition(realPos)
         if (habit != null) {
             val score = cache.getScore(habit.id!!)
             val checkmarks = cache.getCheckmarks(habit.id!!)
@@ -151,7 +203,7 @@ class HabitCardListAdapter @Inject constructor(
             val selected = selectedHabits.contains(habit)
             listView!!.bindCardView(holder, habit, score, checkmarks, notes, selected)
         } else {
-            val habitGroup = cache.getHabitGroupByPosition(position)
+            val habitGroup = cache.getHabitGroupByPosition(realPos)
             val score = cache.getScore(habitGroup!!.id!!)
             val selected = selectedHabitGroups.contains(habitGroup)
             listView!!.bindGroupCardView(holder, habitGroup, score, selected)
@@ -181,7 +233,7 @@ class HabitCardListAdapter @Inject constructor(
 
     // function to override getItemViewType and return the type of the view. The view can either be a HabitCardView or a HabitGroupCardView
     override fun getItemViewType(position: Int): Int {
-        return if (cache.getHabitByPosition(position) != null) {
+        return if (cache.getHabitByPosition(virtualToReal(position)) != null) {
             0
         } else {
             1
@@ -197,26 +249,47 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemChanged(position: Int) {
-        notifyItemChanged(position)
+        if (tabFilter != null) {
+            rebuildFilteredPositions()
+            notifyDataSetChanged()
+        } else {
+            notifyItemChanged(position)
+        }
         observable.notifyListeners()
     }
 
     override fun onItemInserted(position: Int) {
-        notifyItemInserted(position)
+        if (tabFilter != null) {
+            rebuildFilteredPositions()
+            notifyDataSetChanged()
+        } else {
+            notifyItemInserted(position)
+        }
         observable.notifyListeners()
     }
 
     override fun onItemMoved(oldPosition: Int, newPosition: Int) {
-        notifyItemMoved(oldPosition, newPosition)
+        if (tabFilter != null) {
+            rebuildFilteredPositions()
+            notifyDataSetChanged()
+        } else {
+            notifyItemMoved(oldPosition, newPosition)
+        }
         observable.notifyListeners()
     }
 
     override fun onItemRemoved(position: Int) {
-        notifyItemRemoved(position)
+        if (tabFilter != null) {
+            rebuildFilteredPositions()
+            notifyDataSetChanged()
+        } else {
+            notifyItemRemoved(position)
+        }
         observable.notifyListeners()
     }
 
     override fun onRefreshFinished() {
+        if (tabFilter != null) rebuildFilteredPositions()
         observable.notifyListeners()
     }
 

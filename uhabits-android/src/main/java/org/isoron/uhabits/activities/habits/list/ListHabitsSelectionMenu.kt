@@ -26,6 +26,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
 import dagger.Lazy
 import org.isoron.uhabits.R
+import org.isoron.uhabits.activities.habits.list.tabs.HabitTab
 import org.isoron.uhabits.activities.habits.list.views.HabitCardListAdapter
 import org.isoron.uhabits.activities.habits.list.views.HabitCardListController
 import org.isoron.uhabits.core.commands.CommandRunner
@@ -52,6 +53,9 @@ class ListHabitsSelectionMenu @Inject constructor(
 
     var activeActionMode: ActionMode? = null
 
+    /** Set by the activity to handle "Add to Tab" action. */
+    var addToTabCallback: ((habitIds: List<Long>) -> Unit)? = null
+
     fun onSelectionStart() {
         activity.startSupportActionMode(this)
     }
@@ -77,6 +81,7 @@ class ListHabitsSelectionMenu @Inject constructor(
         val itemUnarchive = menu.findItem(R.id.action_unarchive_habit)
         val itemRemoveFromGroup = menu.findItem(R.id.action_remove_from_group)
         val itemAddToGroup = menu.findItem(R.id.action_add_to_group)
+        val itemAddToTab = menu.findItem(R.id.action_add_to_tab)
         val itemNotify = menu.findItem(R.id.action_notify)
 
         itemColor.isVisible = true
@@ -85,6 +90,7 @@ class ListHabitsSelectionMenu @Inject constructor(
         itemUnarchive.isVisible = behavior.canUnarchive()
         itemRemoveFromGroup.isVisible = behavior.areSubHabits()
         itemAddToGroup.isVisible = behavior.areHabits()
+        itemAddToTab.isVisible = behavior.areHabits()
         itemNotify.isVisible = prefs.isDeveloper
         activeActionMode?.title = (listAdapter.selectedHabits.size + listAdapter.selectedHabitGroups.size).toString()
         return true
@@ -117,6 +123,12 @@ class ListHabitsSelectionMenu @Inject constructor(
 
             R.id.action_add_to_group -> {
                 behavior.onAddToGroup()
+                return true
+            }
+
+            R.id.action_add_to_tab -> {
+                val habitIds = listAdapter.selectedHabits.mapNotNull { it.id }
+                addToTabCallback?.invoke(habitIds)
                 return true
             }
 
