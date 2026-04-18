@@ -176,14 +176,24 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
 
     /**
      * Binds [TabBarView.listener] on [rootView.tabBar] to [tabManager].
-     * Called once in [onCreate].
+     * Restores the previously active tab so the user lands on the same tab
+     * after an app restart.  Called once in [onCreate].
      */
     private fun setupTabBar() {
         rootView.tabBar.setTabs(tabManager.getAllTabs())
 
+        // ---- Restore last active tab ----
+        val restoredTabId = tabManager.loadActiveTab()
+        if (restoredTabId != null) {
+            rootView.tabBar.setSelectedTab(restoredTabId)
+            adapter.tabFilter = tabManager.getTab(restoredTabId)?.habitIds?.toSet()
+        }
+        // (if null, bar already defaults to "All" with no filter – nothing to do)
+
         rootView.tabBar.listener = object : org.isoron.uhabits.activities.habits.list.tabs.TabBarView.Listener {
 
             override fun onTabSelected(tabId: String?) {
+                tabManager.saveActiveTab(tabId)
                 adapter.tabFilter = if (tabId == null) null
                 else tabManager.getTab(tabId)?.habitIds?.toSet()
             }
@@ -191,8 +201,9 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
             override fun onTabCreated(name: String) {
                 val tab = tabManager.addTab(name)
                 rootView.tabBar.setTabs(tabManager.getAllTabs())
-                // Auto-select the newly created tab
+                // Auto-select and persist the newly created tab
                 rootView.tabBar.setSelectedTab(tab.id)
+                tabManager.saveActiveTab(tab.id)
                 adapter.tabFilter = tab.habitIds.toSet()
             }
 
@@ -203,7 +214,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
 
             override fun onTabDeleted(tabId: String) {
                 tabManager.deleteTab(tabId)
-                // Fall back to "All" so we never show an orphaned filter
+                // Fall back to "All" and clear the persisted selection
+                tabManager.saveActiveTab(null)
                 adapter.tabFilter = null
                 rootView.tabBar.setTabs(tabManager.getAllTabs())
             }
@@ -291,6 +303,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
     private fun refreshTabBarAndFilter(tabId: String) {
         rootView.tabBar.setTabs(tabManager.getAllTabs())
         rootView.tabBar.setSelectedTab(tabId)
+        tabManager.saveActiveTab(tabId)
         adapter.tabFilter = tabManager.getTab(tabId)?.habitIds?.toSet()
     }
 

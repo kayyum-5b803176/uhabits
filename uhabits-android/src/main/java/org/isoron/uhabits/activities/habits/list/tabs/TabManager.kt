@@ -127,6 +127,32 @@ class TabManager(context: Context) {
     }
 
     // -----------------------------------------------------------------------
+    // Active-tab persistence
+    // -----------------------------------------------------------------------
+
+    /**
+     * Persists [tabId] as the tab that should be re-selected on next launch.
+     * Pass `null` to indicate the "All" tab (no filter).
+     */
+    @Synchronized
+    fun saveActiveTab(tabId: String?) {
+        prefs.edit().apply {
+            if (tabId == null) remove(KEY_ACTIVE_TAB) else putString(KEY_ACTIVE_TAB, tabId)
+        }.apply()
+    }
+
+    /**
+     * Returns the id of the last active tab, or `null` if "All" was selected
+     * (or no tab has ever been saved, or the saved tab no longer exists).
+     */
+    @Synchronized
+    fun loadActiveTab(): String? {
+        val saved = prefs.getString(KEY_ACTIVE_TAB, null) ?: return null
+        // Guard against the saved tab having been deleted since last launch
+        return if (getAllTabs().any { it.id == saved }) saved else null
+    }
+
+    // -----------------------------------------------------------------------
     // Serialisation helpers
     // -----------------------------------------------------------------------
 
@@ -168,6 +194,7 @@ class TabManager(context: Context) {
     companion object {
         private const val PREFS_NAME = "habit_tabs"
         private const val KEY_TABS = "tabs"
+        private const val KEY_ACTIVE_TAB = "active_tab"
         private const val FIELD_ID = "id"
         private const val FIELD_NAME = "name"
         private const val FIELD_HABIT_IDS = "habitIds"
