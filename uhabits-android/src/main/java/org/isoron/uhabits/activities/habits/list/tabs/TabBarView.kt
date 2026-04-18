@@ -181,7 +181,7 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
             setPadding(hPad, vPad, hPad, vPad)
 
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
-            background = buildChipBackground(false)
+            background = null
             setTextColor(getThemeColor(R.attr.contrast60))
 
             setOnClickListener { showCreateTabDialog() }
@@ -195,7 +195,7 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
     private fun buildChipBackground(selected: Boolean): android.graphics.drawable.Drawable {
         val drawable = android.graphics.drawable.GradientDrawable()
         drawable.shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-        drawable.cornerRadius = dp(20).toFloat()
+        drawable.cornerRadius = dp(4).toFloat()
         if (selected) {
             drawable.setColor(getThemeColor(android.R.attr.colorPrimary))
         } else {
