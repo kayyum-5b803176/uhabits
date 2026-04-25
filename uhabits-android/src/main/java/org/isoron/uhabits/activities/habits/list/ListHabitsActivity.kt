@@ -123,6 +123,12 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         tabManager = TabManager(this)
         setupTabBar()
         setupMoveToTabCallback()
+        // Snapshot the current max id NOW so the very first onResume
+        // does not treat all existing habits as "newly created".
+        lastKnownMaxId = maxOf(
+            appComponent.habitList.maxByOrNull { it.id ?: Long.MIN_VALUE }?.id ?: Long.MIN_VALUE,
+            appComponent.habitGroupList.maxByOrNull { it.id ?: Long.MIN_VALUE }?.id ?: Long.MIN_VALUE
+        )
         // ---------------------
 
         setContentView(rootView)
@@ -214,57 +220,38 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
     private fun assignNewItemsToActiveTab() {
         val targetTabId = tabManager.loadActiveTab()
             ?: tabManager.getDefaultTabId()
-            ?: return  // No tabs exist yet — nothing to assign
+            ?: return
 
         var assigned = false
 
-        // New standalone habits
-        appComponent.habitList
+        // New groups → assign group + all its current children to targetTabId
+        val newGroups = appComponent.habitGroupList
             .filter { (it.id ?: Long.MIN_VALUE) > lastKnownMaxId }
-            .forEach { habit ->
-                habit.id?.let { id ->
-                    tabManager.moveItemToTab(id, targetTabId)
-                    assigned = true
-                }
-            }
+        newGroups.forEach { group ->
+            group.tabId = targetTabId
+            val children = group.habitList.toList()
+            children.forEach { child -> child.tabId = targetTabId }
+            appComponent.habitGroupList.update(listOf(group))
+            if (children.isNotEmpty()) appComponent.habitList.update(children)
+            assigned = true
+        }
 
-        // New groups (and their child habits — children always belong to same tab as parent)
-        appComponent.habitGroupList
+        // New standalone habits AND new child habits added to existing groups
+        val newHabits = appComponent.habitList
             .filter { (it.id ?: Long.MIN_VALUE) > lastKnownMaxId }
-            .forEach { group ->
-                group.id?.let { groupId ->
-                    tabManager.moveItemToTab(groupId, targetTabId)
-                    group.habitList.forEach { child ->
-                        child.id?.let { tabManager.moveItemToTab(it, targetTabId) }
-                    }
-                    assigned = true
-                }
-            }
+        newHabits.forEach { habit ->
+            // Child habit: inherit the parent group's tabId (group already has its tabId set)
+            val parentGroup = if (habit.groupId != null)
+                appComponent.habitGroupList.getById(habit.groupId!!)
+            else null
 
-        // Also catch child habits added to an existing group that is already on a tab.
-        // The child habit is newly created (id > lastKnownMaxId) but its parent group
-        // already has a tab — link the child to the same tab.
-        if (!assigned) {
-            appComponent.habitList
-                .filter { (it.id ?: Long.MIN_VALUE) > lastKnownMaxId }
-                .forEach { habit ->
-                    habit.id?.let { id ->
-                        // Find the parent group's tab
-                        val parentGroup = appComponent.habitGroupList
-                            .firstOrNull { g -> g.habitList.any { h -> h.id == id } }
-                        val parentTabId = parentGroup?.id?.let { tabManager.getItemTabId(it) }
-                        val dest = parentTabId ?: targetTabId
-                        tabManager.moveItemToTab(id, dest)
-                        assigned = true
-                    }
-                }
+            habit.tabId = parentGroup?.tabId ?: targetTabId
+            appComponent.habitList.update(listOf(habit))
+            assigned = true
         }
 
         if (assigned) {
-            // Refresh the adapter filter so newly assigned items appear (or stay hidden)
-            val activeTabId = tabManager.loadActiveTab()
-            adapter.tabFilter = if (activeTabId == null) null
-            else tabManager.getTab(activeTabId)?.habitIds?.toSet()
+            adapter.activeTabId = adapter.activeTabId // trigger rebuild + redraw
         }
     }
 
@@ -299,17 +286,15 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         if (restoredTabId != null) {
             rootView.tabBar.setSelectedTab(restoredTabId)
             component.listHabitsSelectionMenu.isOnCustomTab = true
-            adapter.tabFilter = tabManager.getTab(restoredTabId)?.habitIds?.toSet()
+            adapter.activeTabId = restoredTabId
         }
-        // (if null, bar already defaults to "All" with no filter – nothing to do)
 
         rootView.tabBar.listener = object : org.isoron.uhabits.activities.habits.list.tabs.TabBarView.Listener {
 
             override fun onTabSelected(tabId: String?) {
                 tabManager.saveActiveTab(tabId)
                 component.listHabitsSelectionMenu.isOnCustomTab = (tabId != null)
-                adapter.tabFilter = if (tabId == null) null
-                else tabManager.getTab(tabId)?.habitIds?.toSet()
+                adapter.activeTabId = tabId
             }
 
             override fun onTabCreated(name: String) {
@@ -318,7 +303,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
                 rootView.tabBar.setSelectedTab(tab.id)
                 tabManager.saveActiveTab(tab.id)
                 component.listHabitsSelectionMenu.isOnCustomTab = true
-                adapter.tabFilter = tab.habitIds.toSet()
+                adapter.activeTabId = tab.id
             }
 
             override fun onTabRenamed(tabId: String, newName: String) {
@@ -327,10 +312,11 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
             }
 
             override fun onTabDeleted(tabId: String) {
+                // Clear tabId on all habits/groups that belonged to this tab
+                clearTabFromItems(tabId)
                 tabManager.deleteTab(tabId)
-                tabManager.saveActiveTab(null)
                 component.listHabitsSelectionMenu.isOnCustomTab = false
-                adapter.tabFilter = null
+                adapter.activeTabId = null
                 rootView.tabBar.setTabs(tabManager.getAllTabs())
             }
         }
@@ -348,13 +334,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
             showMoveToTabDialog(ids)
         }
         component.listHabitsSelectionMenu.removeFromTabCallback = { ids ->
-            val activeTabId = tabManager.loadActiveTab()
-            if (activeTabId != null) {
-                // Expand groups: also unassign their child habits
-                val allIds = expandWithChildren(ids)
-                allIds.forEach { tabManager.removeItemFromTab(it) }
-                adapter.tabFilter = tabManager.getTab(activeTabId)?.habitIds?.toSet()
-            }
+            setTabIdOnItems(expandWithChildren(ids), null)
+            adapter.activeTabId = adapter.activeTabId  // trigger rebuild
         }
     }
 
@@ -438,7 +419,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
      * the tab bar and the active filter.
      */
     private fun performMove(ids: List<Long>, tabId: String) {
-        ids.forEach { tabManager.moveItemToTab(it, tabId) }
+        setTabIdOnItems(expandWithChildren(ids), tabId)
         refreshTabBarAndFilter(tabId)
     }
 
@@ -448,7 +429,45 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         rootView.tabBar.setSelectedTab(tabId)
         tabManager.saveActiveTab(tabId)
         component.listHabitsSelectionMenu.isOnCustomTab = true
-        adapter.tabFilter = tabManager.getTab(tabId)?.habitIds?.toSet()
+        adapter.activeTabId = tabId
+    }
+
+    /**
+     * Sets [tabId] on every habit/group in [ids] and persists to the DB.
+     * Null means "unassign" (item moves to All).
+     * Groups also update all their child habits.
+     */
+    private fun setTabIdOnItems(ids: List<Long>, tabId: String?) {
+        ids.forEach { id ->
+            val habit = appComponent.habitList.getById(id)
+            if (habit != null) {
+                habit.tabId = tabId
+                appComponent.habitList.update(listOf(habit))
+            } else {
+                val group = appComponent.habitGroupList.getById(id)
+                if (group != null) {
+                    group.tabId = tabId
+                    appComponent.habitGroupList.update(listOf(group))
+                    val children = group.habitList.toList()
+                    children.forEach { it.tabId = tabId }
+                    if (children.isNotEmpty()) appComponent.habitList.update(children)
+                }
+            }
+        }
+    }
+
+    /**
+     * Clears tabId on every habit/group that currently belongs to [tabId].
+     * Called before deleting a tab so items become "unassigned" (visible in All).
+     */
+    private fun clearTabFromItems(tabId: String) {
+        val habitsToUpdate = appComponent.habitList.filter { it.tabId == tabId }
+        habitsToUpdate.forEach { it.tabId = null }
+        if (habitsToUpdate.isNotEmpty()) appComponent.habitList.update(habitsToUpdate)
+
+        val groupsToUpdate = appComponent.habitGroupList.filter { it.tabId == tabId }
+        groupsToUpdate.forEach { it.tabId = null }
+        if (groupsToUpdate.isNotEmpty()) appComponent.habitGroupList.update(groupsToUpdate)
     }
 
     override fun onCreateOptionsMenu(m: Menu): Boolean {

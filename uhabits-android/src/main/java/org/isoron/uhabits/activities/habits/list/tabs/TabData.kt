@@ -21,13 +21,13 @@ package org.isoron.uhabits.activities.habits.list.tabs
 
 /**
  * Represents a single user-defined tab in the habit list.
+ * Membership (which habits/groups belong to this tab) is stored in the
+ * database via the [Habit.tabId] / [HabitGroup.tabId] fields rather than here.
  *
- * @param id        A unique identifier (UUID string) for this tab.
- * @param name      The display name shown on the tab chip.
- * @param habitIds  The set of habit IDs that belong to this tab.
+ * @param id    A unique identifier (UUID string) for this tab.
+ * @param name  The display name shown on the tab chip.
  */
 data class HabitTab(
     val id: String,
-    var name: String,
-    val habitIds: MutableSet<Long> = mutableSetOf()
+    var name: String
 )

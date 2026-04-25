@@ -42,7 +42,7 @@ import javax.inject.Inject
 // When a tab filter is active, `filteredPositions` holds the subset of real
 // cache indices that match the tab's habitIds. All public position-based APIs
 // translate through virtualToReal() before delegating to the cache.
-// When no filter is active (tabFilter == null), virtualToReal() is a no-op.
+// When no filter is active (activeTabId == null), virtualToReal() is a no-op.
 
 /**
  * Provides data that backs a [HabitCardListView].
@@ -68,15 +68,16 @@ class HabitCardListAdapter @Inject constructor(
     val selectedHabitGroups: LinkedList<HabitGroup> = LinkedList()
 
     // ------------------------------------------------------------------
-    // Tab filter
+    // Tab filter — DB-backed via Habit.tabId / HabitGroup.tabId
     // ------------------------------------------------------------------
 
     /**
-     * When non-null, only habits whose id is in this set are shown.
-     * Setting this triggers a full position rebuild and a dataset refresh.
+     * When non-null, only habits/groups whose tabId equals this value are shown.
+     * Child habits are shown automatically because they carry the same tabId
+     * as their parent group when assigned via moveItemToTab().
      */
     @SuppressLint("NotifyDataSetChanged")
-    var tabFilter: Set<Long>? = null
+    var activeTabId: String? = null
         set(value) {
             field = value
             rebuildFilteredPositions()
@@ -84,31 +85,44 @@ class HabitCardListAdapter @Inject constructor(
             observable.notifyListeners()
         }
 
-    /** Sorted list of real cache positions that survive the active tab filter. */
+    /** Sorted list of real cache positions that pass the active tab filter. */
     private var filteredPositions: List<Int> = emptyList()
 
-    /**
-     * Rebuilds [filteredPositions] from the current cache state and active
-     * [tabFilter]. Must be called whenever the cache changes while a filter is
-     * active, or whenever [tabFilter] itself changes.
-     */
     private fun rebuildFilteredPositions() {
-        val filter = tabFilter
-        if (filter == null) {
+        val tabId = activeTabId
+        if (tabId == null) {
             filteredPositions = emptyList()
             return
         }
+
+        // Build a map of groupId -> tabId for all groups in the cache so child
+        // habits can inherit their parent's tab assignment in O(1).
+        val groupTabIds = mutableMapOf<Long, String?>()
+        for (i in 0 until cache.itemCount) {
+            val group = cache.getHabitGroupByPosition(i)
+            if (group?.id != null) groupTabIds[group.id!!] = group.tabId
+        }
+
         val result = mutableListOf<Int>()
         for (i in 0 until cache.itemCount) {
-            val id = cache.getIdByPosition(i)
-            if (id != null && filter.contains(id)) result.add(i)
+            val habit = cache.getHabitByPosition(i)
+            if (habit != null) {
+                // Child habit: match if own tabId matches OR parent group's tabId matches
+                val effectiveTabId = if (habit.groupId != null)
+                    groupTabIds[habit.groupId] ?: habit.tabId
+                else
+                    habit.tabId
+                if (effectiveTabId == tabId) result.add(i)
+            } else {
+                val group = cache.getHabitGroupByPosition(i)
+                if (group != null && group.tabId == tabId) result.add(i)
+            }
         }
         filteredPositions = result
     }
 
-    /** Translates a virtual (filtered) position to a real cache position. */
     private fun virtualToReal(virtualPos: Int): Int =
-        if (tabFilter == null) virtualPos else filteredPositions[virtualPos]
+        if (activeTabId == null) virtualPos else filteredPositions[virtualPos]
 
     override fun atMidnight() {
         cache.refreshAllHabits()
@@ -165,7 +179,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun getItemCount(): Int =
-        if (tabFilter == null) cache.itemCount else filteredPositions.size
+        if (activeTabId == null) cache.itemCount else filteredPositions.size
 
     override fun getItemId(position: Int): Long {
         return cache.getIdByPosition(virtualToReal(position))!!
@@ -249,7 +263,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemChanged(position: Int) {
-        if (tabFilter != null) {
+        if (activeTabId != null) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         } else {
@@ -259,7 +273,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemInserted(position: Int) {
-        if (tabFilter != null) {
+        if (activeTabId != null) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         } else {
@@ -269,7 +283,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemMoved(oldPosition: Int, newPosition: Int) {
-        if (tabFilter != null) {
+        if (activeTabId != null) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         } else {
@@ -279,7 +293,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemRemoved(position: Int) {
-        if (tabFilter != null) {
+        if (activeTabId != null) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         } else {
@@ -289,7 +303,10 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onRefreshFinished() {
-        if (tabFilter != null) rebuildFilteredPositions()
+        if (activeTabId != null) {
+            rebuildFilteredPositions()
+            notifyDataSetChanged()
+        }
         observable.notifyListeners()
     }
 

@@ -13,6 +13,7 @@ data class HabitGroup(
     var question: String = "",
     var reminder: Reminder? = null,
     var uuid: String? = null,
+    var tabId: String? = null,
     var habitList: HabitList,
     val scores: ScoreList,
     val streaks: StreakList
@@ -31,6 +32,7 @@ data class HabitGroup(
         parent.question,
         parent.reminder,
         parent.uuid,
+        parent.tabId,
         parent.habitList.getFiltered(matcher),
         parent.scores,
         parent.streaks

@@ -42,6 +42,7 @@ data class Habit(
     val scores: ScoreList,
     val streaks: StreakList,
     var groupId: Long? = null,
+    var tabId: String? = null,
     var groupUUID: String? = null,
     var virtualProgress: Double = 0.0
 ) {

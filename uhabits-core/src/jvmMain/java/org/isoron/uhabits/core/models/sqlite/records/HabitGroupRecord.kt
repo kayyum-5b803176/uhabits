@@ -46,6 +46,9 @@ class HabitGroupRecord {
     @field:Column
     var collapsed: Int? = null
 
+    @field:Column(name = "tab_id")
+    var tabId: String? = null
+
     @field:Column
     var id: Long? = null
 
@@ -63,6 +66,7 @@ class HabitGroupRecord {
         position = model.position
         question = model.question
         uuid = model.uuid
+        tabId = model.tabId
         reminderDays = 0
         reminderMin = null
         reminderHour = null
@@ -84,6 +88,7 @@ class HabitGroupRecord {
         habitGroup.collapsed = collapsed != 0
         habitGroup.position = position!!
         habitGroup.uuid = uuid
+        habitGroup.tabId = tabId
         habitGroup.habitList.groupId = id
         if (reminderHour != null && reminderMin != null) {
             habitGroup.reminder = Reminder(

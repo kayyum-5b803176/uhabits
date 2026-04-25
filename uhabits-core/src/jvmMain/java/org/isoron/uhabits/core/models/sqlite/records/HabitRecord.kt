@@ -101,6 +101,9 @@ class HabitRecord {
     @field:Column(name = "group_uuid")
     var groupUUID: String? = null
 
+    @field:Column(name = "tab_id")
+    var tabId: String? = null
+
     @field:Column(name = "virtual_progress")
     var virtualProgress: Double? = null
 
@@ -120,6 +123,7 @@ class HabitRecord {
         uuid = model.uuid
         groupId = model.groupId
         groupUUID = model.groupUUID
+        tabId = model.tabId
         virtualProgress = model.virtualProgress
         val (numerator, denominator) = model.frequency
         freqNum = numerator
@@ -154,6 +158,7 @@ class HabitRecord {
         habit.uuid = uuid
         habit.groupId = groupId
         habit.groupUUID = groupUUID
+        habit.tabId = tabId
         habit.virtualProgress = virtualProgress ?: 0.0
         if (reminderHour != null && reminderMin != null) {
             habit.reminder = Reminder(
