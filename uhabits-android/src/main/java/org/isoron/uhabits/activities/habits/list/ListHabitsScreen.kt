@@ -73,6 +73,7 @@ import org.isoron.uhabits.utils.restartWithFade
 import org.isoron.uhabits.utils.showMessage
 import org.isoron.uhabits.utils.showSendEmailScreen
 import org.isoron.uhabits.utils.showSendFileScreen
+import org.isoron.uhabits.utils.DatabaseUtils
 import java.io.File
 import java.io.IOException
 import javax.inject.Inject
@@ -83,6 +84,7 @@ const val RESULT_EXPORT_DB = 103
 const val RESULT_BUG_REPORT = 104
 const val RESULT_REPAIR_DB = 105
 const val REQUEST_OPEN_DOCUMENT = 106
+const val REQUEST_CREATE_DOCUMENT = 108
 const val REQUEST_SETTINGS = 107
 
 @ActivityScope
@@ -123,6 +125,7 @@ class ListHabitsScreen
     fun onResult(requestCode: Int, resultCode: Int, data: Intent?) {
         when (requestCode) {
             REQUEST_OPEN_DOCUMENT -> onOpenDocumentResult(resultCode, data)
+            REQUEST_CREATE_DOCUMENT -> onCreateDocumentResult(resultCode, data)
             REQUEST_SETTINGS -> onSettingsResult(resultCode)
         }
     }
@@ -350,14 +353,31 @@ class ListHabitsScreen
     }
 
     private fun onExportDB() {
-        taskRunner.execute(
-            exportDBFactory.create { filename ->
-                if (filename != null) {
-                    activity.showSendFileScreen(filename)
-                } else {
-                    activity.showMessage(activity.resources.getString(R.string.could_not_export))
-                }
+        // Build a default filename with today's date and launch the SAF picker
+        // so the user can choose exactly where the backup is saved.
+        val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+            .format(java.util.Date())
+        val fileName = "Loop Habits Backup $dateStr.db"
+        val intent = intentFactory.createDocument(fileName)
+        activity.startActivityForResult(intent, REQUEST_CREATE_DOCUMENT)
+    }
+
+    /**
+     * Called when the user has chosen a save location via SAF.
+     * Copies the live database file into the URI returned by the picker.
+     */
+    private fun onCreateDocumentResult(resultCode: Int, data: Intent?) {
+        if (data?.data == null || resultCode != Activity.RESULT_OK) return
+        val destUri = data.data!!
+        try {
+            val dbFile = org.isoron.uhabits.utils.DatabaseUtils.getDatabaseFile(activity)
+            activity.contentResolver.openOutputStream(destUri)!!.use { out ->
+                dbFile.inputStream().use { it.copyTo(out) }
             }
-        )
+            activity.showMessage(activity.resources.getString(R.string.database_exported))
+        } catch (e: Exception) {
+            activity.showMessage(activity.resources.getString(R.string.could_not_export))
+            e.printStackTrace()
+        }
     }
 }

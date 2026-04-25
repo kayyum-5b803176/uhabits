@@ -48,7 +48,7 @@ android {
 
     defaultConfig {
         versionCode = 20202
-        versionName = "2.4.4"
+        versionName = "2.5.0"
         minSdk = 28
         targetSdk = 34
         // targetSdkPreview = "VanillaIceCream"

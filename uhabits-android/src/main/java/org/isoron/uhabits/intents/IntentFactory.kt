@@ -46,6 +46,16 @@ class IntentFactory
         type = "*/*"
     }
 
+    /**
+     * Opens the SAF "save file" picker so the user can choose where to store
+     * the exported database backup.
+     */
+    fun createDocument(fileName: String) = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+        addCategory(Intent.CATEGORY_OPENABLE)
+        type = "application/octet-stream"
+        putExtra(Intent.EXTRA_TITLE, fileName)
+    }
+
     fun rateApp(context: Context) =
         buildViewIntent(context.getString(R.string.playStoreURL))
 
