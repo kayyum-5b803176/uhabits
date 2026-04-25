@@ -53,8 +53,18 @@ class ListHabitsSelectionMenu @Inject constructor(
 
     var activeActionMode: ActionMode? = null
 
-    /** Set by the activity to handle "Add to Tab" action. */
-    var addToTabCallback: ((habitIds: List<Long>) -> Unit)? = null
+    /** Set by the activity to handle "Move to Tab" action. */
+    var moveToTabCallback: ((ids: List<Long>) -> Unit)? = null
+
+    /**
+     * Set by the activity whenever the active tab changes.
+     * True when the user is on a named tab (not "All") — controls visibility
+     * of "Remove from tab".
+     */
+    var isOnCustomTab: Boolean = false
+
+    /** Set by the activity to handle "Remove from Tab" action. */
+    var removeFromTabCallback: ((ids: List<Long>) -> Unit)? = null
 
     fun onSelectionStart() {
         activity.startSupportActionMode(this)
@@ -82,7 +92,10 @@ class ListHabitsSelectionMenu @Inject constructor(
         val itemRemoveFromGroup = menu.findItem(R.id.action_remove_from_group)
         val itemAddToGroup = menu.findItem(R.id.action_add_to_group)
         val itemAddToTab = menu.findItem(R.id.action_add_to_tab)
+        val itemRemoveFromTab = menu.findItem(R.id.action_remove_from_tab)
         val itemNotify = menu.findItem(R.id.action_notify)
+
+        val anySelected = listAdapter.selectedHabits.isNotEmpty() || listAdapter.selectedHabitGroups.isNotEmpty()
 
         itemColor.isVisible = true
         itemEdit.isVisible = behavior.canEdit()
@@ -90,7 +103,8 @@ class ListHabitsSelectionMenu @Inject constructor(
         itemUnarchive.isVisible = behavior.canUnarchive()
         itemRemoveFromGroup.isVisible = behavior.areSubHabits()
         itemAddToGroup.isVisible = behavior.areHabits()
-        itemAddToTab.isVisible = behavior.areHabits()
+        itemAddToTab.isVisible = anySelected
+        itemRemoveFromTab.isVisible = anySelected && isOnCustomTab
         itemNotify.isVisible = prefs.isDeveloper
         activeActionMode?.title = (listAdapter.selectedHabits.size + listAdapter.selectedHabitGroups.size).toString()
         return true
@@ -127,8 +141,16 @@ class ListHabitsSelectionMenu @Inject constructor(
             }
 
             R.id.action_add_to_tab -> {
-                val habitIds = listAdapter.selectedHabits.mapNotNull { it.id }
-                addToTabCallback?.invoke(habitIds)
+                val ids = listAdapter.selectedHabits.mapNotNull { it.id } +
+                          listAdapter.selectedHabitGroups.mapNotNull { it.id }
+                moveToTabCallback?.invoke(ids)
+                return true
+            }
+
+            R.id.action_remove_from_tab -> {
+                val ids = listAdapter.selectedHabits.mapNotNull { it.id } +
+                          listAdapter.selectedHabitGroups.mapNotNull { it.id }
+                removeFromTabCallback?.invoke(ids)
                 return true
             }
 

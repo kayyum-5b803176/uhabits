@@ -48,7 +48,7 @@ android {
 
     defaultConfig {
         versionCode = 20202
-        versionName = "2.4.1"
+        versionName = "2.4.2"
         minSdk = 28
         targetSdk = 34
         // targetSdkPreview = "VanillaIceCream"
@@ -71,6 +71,7 @@ android {
         getByName("release") {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.txt")
+            signingConfig = signingConfigs.getByName("debug")
             if (signingConfigs.findByName("release") != null) {
                 signingConfig = signingConfigs.getByName("release")
             }

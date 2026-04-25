@@ -39,6 +39,9 @@ import org.isoron.uhabits.activities.habits.list.tabs.TabManager
 import org.isoron.uhabits.BaseExceptionHandler
 import org.isoron.uhabits.HabitsApplication
 import org.isoron.uhabits.R
+import org.isoron.uhabits.core.commands.CommandRunner
+import org.isoron.uhabits.core.commands.CreateHabitCommand
+import org.isoron.uhabits.core.commands.CreateHabitGroupCommand
 import org.isoron.uhabits.activities.habits.list.views.HabitCardListAdapter
 import org.isoron.uhabits.core.models.Timestamp
 import org.isoron.uhabits.core.preferences.Preferences
@@ -54,7 +57,7 @@ import org.isoron.uhabits.utils.applyRootViewInsets
 import org.isoron.uhabits.utils.dismissCurrentDialog
 import org.isoron.uhabits.utils.restartWithFade
 
-class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
+class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRunner.Listener {
 
     var pureBlack: Boolean = false
     lateinit var appComponent: HabitsApplicationComponent
@@ -112,7 +115,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
         // ---- Tab feature ----
         tabManager = TabManager(this)
         setupTabBar()
-        setupAddToTabCallback()
+        setupMoveToTabCallback()
         // ---------------------
 
         setContentView(rootView)
@@ -121,6 +124,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
     override fun onPause() {
         midnightTimer.onPause()
         screen.onDetached()
+        appComponent.commandRunner.removeListener(this)
         adapter.cancelRefresh()
         dismissCurrentDialog()
         super.onPause()
@@ -129,6 +133,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
     override fun onResume() {
         adapter.refresh()
         screen.onAttached()
+        appComponent.commandRunner.addListener(this)
         rootView.postInvalidate()
         midnightTimer.onResume()
 
@@ -171,6 +176,46 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
     }
 
     // -----------------------------------------------------------------------
+    // CommandRunner.Listener — auto-link new items to active tab
+    // -----------------------------------------------------------------------
+
+    /**
+     * Called after every command finishes. When a [CreateHabitCommand] or
+     * [CreateHabitGroupCommand] completes and the user is viewing a custom tab
+     * (not "All"), the newly created item is automatically added to that tab.
+     *
+     * The newly created item has the highest id in its list because ids are
+     * auto-incremented. We find it by scanning for the maximum id.
+     */
+    override fun onCommandFinished(command: org.isoron.uhabits.core.commands.Command) {
+        // Determine target tab: active tab, or default tab if user is on "All"
+        val targetTabId = tabManager.loadActiveTab() ?: tabManager.getDefaultTabId() ?: return
+
+        when (command) {
+            is CreateHabitCommand -> {
+                val newId = appComponent.habitList
+                    .maxByOrNull { it.id ?: Long.MIN_VALUE }?.id ?: return
+                tabManager.moveItemToTab(newId, targetTabId)
+                adapter.tabFilter = tabManager.getTab(tabManager.loadActiveTab() ?: "")
+                    ?.habitIds?.toSet() ?: adapter.tabFilter
+            }
+            is CreateHabitGroupCommand -> {
+                val group = appComponent.habitGroupList
+                    .maxByOrNull { it.id ?: Long.MIN_VALUE } ?: return
+                val groupId = group.id ?: return
+                // Move the group and all its children to the target tab
+                tabManager.moveItemToTab(groupId, targetTabId)
+                group.habitList.forEach { child ->
+                    child.id?.let { tabManager.moveItemToTab(it, targetTabId) }
+                }
+                adapter.tabFilter = tabManager.getTab(tabManager.loadActiveTab() ?: "")
+                    ?.habitIds?.toSet() ?: adapter.tabFilter
+            }
+            else -> {}
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Tab bar
     // -----------------------------------------------------------------------
 
@@ -186,6 +231,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
         val restoredTabId = tabManager.loadActiveTab()
         if (restoredTabId != null) {
             rootView.tabBar.setSelectedTab(restoredTabId)
+            component.listHabitsSelectionMenu.isOnCustomTab = true
             adapter.tabFilter = tabManager.getTab(restoredTabId)?.habitIds?.toSet()
         }
         // (if null, bar already defaults to "All" with no filter – nothing to do)
@@ -194,6 +240,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
 
             override fun onTabSelected(tabId: String?) {
                 tabManager.saveActiveTab(tabId)
+                component.listHabitsSelectionMenu.isOnCustomTab = (tabId != null)
                 adapter.tabFilter = if (tabId == null) null
                 else tabManager.getTab(tabId)?.habitIds?.toSet()
             }
@@ -201,9 +248,9 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
             override fun onTabCreated(name: String) {
                 val tab = tabManager.addTab(name)
                 rootView.tabBar.setTabs(tabManager.getAllTabs())
-                // Auto-select and persist the newly created tab
                 rootView.tabBar.setSelectedTab(tab.id)
                 tabManager.saveActiveTab(tab.id)
+                component.listHabitsSelectionMenu.isOnCustomTab = true
                 adapter.tabFilter = tab.habitIds.toSet()
             }
 
@@ -214,8 +261,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
 
             override fun onTabDeleted(tabId: String) {
                 tabManager.deleteTab(tabId)
-                // Fall back to "All" and clear the persisted selection
                 tabManager.saveActiveTab(null)
+                component.listHabitsSelectionMenu.isOnCustomTab = false
                 adapter.tabFilter = null
                 rootView.tabBar.setTabs(tabManager.getAllTabs())
             }
@@ -229,17 +276,43 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
      * The callback is invoked from [ListHabitsSelectionMenu] when the user
      * taps "Add to tab" in the contextual action bar.
      */
-    private fun setupAddToTabCallback() {
-        component.listHabitsSelectionMenu.addToTabCallback = { habitIds ->
-            showAddToTabDialog(habitIds)
+    private fun setupMoveToTabCallback() {
+        component.listHabitsSelectionMenu.moveToTabCallback = { ids ->
+            showMoveToTabDialog(ids)
+        }
+        component.listHabitsSelectionMenu.removeFromTabCallback = { ids ->
+            val activeTabId = tabManager.loadActiveTab()
+            if (activeTabId != null) {
+                // Expand groups: also unassign their child habits
+                val allIds = expandWithChildren(ids)
+                allIds.forEach { tabManager.removeItemFromTab(it) }
+                adapter.tabFilter = tabManager.getTab(activeTabId)?.habitIds?.toSet()
+            }
         }
     }
 
-    private fun showAddToTabDialog(habitIds: List<Long>) {
+    /**
+     * Given a list of selected ids (habits and/or groups), returns the same
+     * list plus the ids of every child habit of any selected group.
+     * This ensures group moves carry their children along.
+     */
+    private fun expandWithChildren(ids: List<Long>): List<Long> {
+        val result = ids.toMutableList()
+        ids.forEach { id ->
+            val group = appComponent.habitGroupList.getById(id)
+            group?.habitList?.forEach { child ->
+                child.id?.let { childId -> if (!result.contains(childId)) result.add(childId) }
+            }
+        }
+        return result
+    }
+
+    private fun showMoveToTabDialog(ids: List<Long>) {
         val tabs = tabManager.getAllTabs()
+        val allIds = expandWithChildren(ids)
 
         if (tabs.isEmpty()) {
-            // No tabs yet – prompt to create one first
+            // No tabs yet — offer to create one
             val input = EditText(this).apply {
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
                 hint = getString(R.string.tab_name_hint)
@@ -253,14 +326,13 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
                     val name = input.text.toString().trim()
                     if (name.isNotEmpty()) {
                         val tab = tabManager.addTab(name)
-                        habitIds.forEach { tabManager.addHabitToTab(it, tab.id) }
-                        refreshTabBarAndFilter(tab.id)
+                        performMove(allIds, tab.id)
                     }
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         } else {
-            // Show existing tabs + a "New tab…" entry at the end
+            // Show existing tabs + "New tab…"
             val labels = tabs.map { it.name }.toMutableList()
             labels.add(getString(R.string.tab_create_title) + "…")
 
@@ -268,12 +340,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
                 .setTitle(getString(R.string.add_to_tab))
                 .setItems(labels.toTypedArray()) { _, which ->
                     if (which < tabs.size) {
-                        // Existing tab selected
-                        val tab = tabs[which]
-                        habitIds.forEach { tabManager.addHabitToTab(it, tab.id) }
-                        refreshTabBarAndFilter(tab.id)
+                        performMove(allIds, tabs[which].id)
                     } else {
-                        // "New tab…" selected – ask for a name first
                         val input = EditText(this).apply {
                             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
                             hint = getString(R.string.tab_name_hint)
@@ -287,8 +355,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
                                 val name = input.text.toString().trim()
                                 if (name.isNotEmpty()) {
                                     val tab = tabManager.addTab(name)
-                                    habitIds.forEach { tabManager.addHabitToTab(it, tab.id) }
-                                    refreshTabBarAndFilter(tab.id)
+                                    performMove(allIds, tab.id)
                                 }
                             }
                             .setNegativeButton(android.R.string.cancel, null)
@@ -299,11 +366,21 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
         }
     }
 
+    /**
+     * Moves [ids] to [tabId] using single-ownership semantics, then refreshes
+     * the tab bar and the active filter.
+     */
+    private fun performMove(ids: List<Long>, tabId: String) {
+        ids.forEach { tabManager.moveItemToTab(it, tabId) }
+        refreshTabBarAndFilter(tabId)
+    }
+
     /** Refreshes the tab bar chips and switches the active filter to [tabId]. */
     private fun refreshTabBarAndFilter(tabId: String) {
         rootView.tabBar.setTabs(tabManager.getAllTabs())
         rootView.tabBar.setSelectedTab(tabId)
         tabManager.saveActiveTab(tabId)
+        component.listHabitsSelectionMenu.isOnCustomTab = true
         adapter.tabFilter = tabManager.getTab(tabId)?.habitIds?.toSet()
     }
 
