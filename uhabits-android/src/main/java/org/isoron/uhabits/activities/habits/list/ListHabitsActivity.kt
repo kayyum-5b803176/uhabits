@@ -40,8 +40,6 @@ import org.isoron.uhabits.BaseExceptionHandler
 import org.isoron.uhabits.HabitsApplication
 import org.isoron.uhabits.R
 import org.isoron.uhabits.core.commands.CommandRunner
-import org.isoron.uhabits.core.commands.CreateHabitCommand
-import org.isoron.uhabits.core.commands.CreateHabitGroupCommand
 import org.isoron.uhabits.activities.habits.list.views.HabitCardListAdapter
 import org.isoron.uhabits.core.models.Timestamp
 import org.isoron.uhabits.core.preferences.Preferences
@@ -69,6 +67,15 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
     lateinit var prefs: Preferences
     lateinit var midnightTimer: MidnightTimer
     lateinit var tabManager: TabManager
+
+    /**
+     * Snapshot of the highest habit/group id seen at [onPause].
+     * On [onResume] any id higher than this was created while we were paused
+     * (i.e. the user was in EditHabitActivity) and needs to be assigned to the
+     * active tab.
+     */
+    private var lastKnownMaxId: Long = Long.MIN_VALUE
+
     private val scope = CoroutineScope(Dispatchers.Main)
 
     private var permissionAlreadyRequested = false
@@ -127,6 +134,12 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         appComponent.commandRunner.removeListener(this)
         adapter.cancelRefresh()
         dismissCurrentDialog()
+        // Snapshot the highest id across all habits and groups so onResume can
+        // detect items that were created while this activity was paused.
+        lastKnownMaxId = maxOf(
+            appComponent.habitList.maxByOrNull { it.id ?: Long.MIN_VALUE }?.id ?: Long.MIN_VALUE,
+            appComponent.habitGroupList.maxByOrNull { it.id ?: Long.MIN_VALUE }?.id ?: Long.MIN_VALUE
+        )
         super.onPause()
     }
 
@@ -136,6 +149,9 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         appComponent.commandRunner.addListener(this)
         rootView.postInvalidate()
         midnightTimer.onResume()
+
+        // Assign any items created while we were paused (e.g. in EditHabitActivity)
+        assignNewItemsToActiveTab()
 
         if (appComponent.reminderScheduler.hasHabitsWithReminders()) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
@@ -179,40 +195,91 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
     // CommandRunner.Listener — auto-link new items to active tab
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // CommandRunner.Listener — tab assignment for new items
+    // -----------------------------------------------------------------------
+
     /**
-     * Called after every command finishes. When a [CreateHabitCommand] or
-     * [CreateHabitGroupCommand] completes and the user is viewing a custom tab
-     * (not "All"), the newly created item is automatically added to that tab.
+     * Scans for habits and groups whose id exceeds [lastKnownMaxId] (meaning
+     * they were created while [ListHabitsActivity] was paused, e.g. inside
+     * [EditHabitActivity]) and assigns them to the active tab.
      *
-     * The newly created item has the highest id in its list because ids are
-     * auto-incremented. We find it by scanning for the maximum id.
+     * Also handles the edge case where the user creates an item while already
+     * on this activity (id snapshotting keeps this idempotent — a newly
+     * inserted item always has the highest id).
+     *
+     * Called from [onResume] so it always runs after returning from any
+     * creation flow regardless of which Activity hosted it.
+     */
+    private fun assignNewItemsToActiveTab() {
+        val targetTabId = tabManager.loadActiveTab()
+            ?: tabManager.getDefaultTabId()
+            ?: return  // No tabs exist yet — nothing to assign
+
+        var assigned = false
+
+        // New standalone habits
+        appComponent.habitList
+            .filter { (it.id ?: Long.MIN_VALUE) > lastKnownMaxId }
+            .forEach { habit ->
+                habit.id?.let { id ->
+                    tabManager.moveItemToTab(id, targetTabId)
+                    assigned = true
+                }
+            }
+
+        // New groups (and their child habits — children always belong to same tab as parent)
+        appComponent.habitGroupList
+            .filter { (it.id ?: Long.MIN_VALUE) > lastKnownMaxId }
+            .forEach { group ->
+                group.id?.let { groupId ->
+                    tabManager.moveItemToTab(groupId, targetTabId)
+                    group.habitList.forEach { child ->
+                        child.id?.let { tabManager.moveItemToTab(it, targetTabId) }
+                    }
+                    assigned = true
+                }
+            }
+
+        // Also catch child habits added to an existing group that is already on a tab.
+        // The child habit is newly created (id > lastKnownMaxId) but its parent group
+        // already has a tab — link the child to the same tab.
+        if (!assigned) {
+            appComponent.habitList
+                .filter { (it.id ?: Long.MIN_VALUE) > lastKnownMaxId }
+                .forEach { habit ->
+                    habit.id?.let { id ->
+                        // Find the parent group's tab
+                        val parentGroup = appComponent.habitGroupList
+                            .firstOrNull { g -> g.habitList.any { h -> h.id == id } }
+                        val parentTabId = parentGroup?.id?.let { tabManager.getItemTabId(it) }
+                        val dest = parentTabId ?: targetTabId
+                        tabManager.moveItemToTab(id, dest)
+                        assigned = true
+                    }
+                }
+        }
+
+        if (assigned) {
+            // Refresh the adapter filter so newly assigned items appear (or stay hidden)
+            val activeTabId = tabManager.loadActiveTab()
+            adapter.tabFilter = if (activeTabId == null) null
+            else tabManager.getTab(activeTabId)?.habitIds?.toSet()
+        }
+    }
+
+    /**
+     * [onCommandFinished] fires while [ListHabitsActivity] is active (not paused).
+     * For create-habit/group commands this is a no-op here because the create
+     * dialog always opens a new Activity, pausing this one — so the command
+     * fires while we are NOT listening.  All assignment is handled by
+     * [assignNewItemsToActiveTab] in [onResume].
+     *
+     * We keep the override to satisfy [CommandRunner.Listener].
      */
     override fun onCommandFinished(command: org.isoron.uhabits.core.commands.Command) {
-        // Determine target tab: active tab, or default tab if user is on "All"
-        val targetTabId = tabManager.loadActiveTab() ?: tabManager.getDefaultTabId() ?: return
-
-        when (command) {
-            is CreateHabitCommand -> {
-                val newId = appComponent.habitList
-                    .maxByOrNull { it.id ?: Long.MIN_VALUE }?.id ?: return
-                tabManager.moveItemToTab(newId, targetTabId)
-                adapter.tabFilter = tabManager.getTab(tabManager.loadActiveTab() ?: "")
-                    ?.habitIds?.toSet() ?: adapter.tabFilter
-            }
-            is CreateHabitGroupCommand -> {
-                val group = appComponent.habitGroupList
-                    .maxByOrNull { it.id ?: Long.MIN_VALUE } ?: return
-                val groupId = group.id ?: return
-                // Move the group and all its children to the target tab
-                tabManager.moveItemToTab(groupId, targetTabId)
-                group.habitList.forEach { child ->
-                    child.id?.let { tabManager.moveItemToTab(it, targetTabId) }
-                }
-                adapter.tabFilter = tabManager.getTab(tabManager.loadActiveTab() ?: "")
-                    ?.habitIds?.toSet() ?: adapter.tabFilter
-            }
-            else -> {}
-        }
+        // Intentionally empty — new-item tab assignment is handled in onResume
+        // via assignNewItemsToActiveTab() which is immune to the pause/resume gap.
     }
 
     // -----------------------------------------------------------------------
