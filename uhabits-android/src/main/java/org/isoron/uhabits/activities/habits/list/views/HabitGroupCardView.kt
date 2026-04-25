@@ -57,19 +57,48 @@ class HabitGroupCardView(
     private var innerFrame: LinearLayout
     private var label: TextView
     private var scoreRing: RingView
+    private var tabDot: android.view.View
+
+    var showTabDot: Boolean = false
+        set(value) {
+            field = value
+            habitGroup?.let { refreshTabDot(it.tabId) }
+        }
+
+    private fun refreshTabDot(tabId: String?) {
+        tabDot.visibility = if (showTabDot && tabId != null) android.view.View.VISIBLE else android.view.View.GONE
+    }
 
     private var currentToggleTaskId = 0
 
     init {
+        val dotDrawable = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setColor(0xFF26C6DA.toInt())
+        }
+        val dotSize = dp(4f).toInt()
+        val ringSize = dp(15f).toInt()
+        val ringMargin = dp(8f).toInt()
+
+        tabDot = android.view.View(context).apply {
+            background = dotDrawable
+            layoutParams = FrameLayout.LayoutParams(dotSize, dotSize, Gravity.CENTER)
+            visibility = android.view.View.GONE
+        }
+
         scoreRing = RingView(context).apply {
             val thickness = dp(3f)
-            val margin = dp(8f).toInt()
-            val ringSize = dp(15f).toInt()
+            layoutParams = FrameLayout.LayoutParams(ringSize, ringSize)
+            setThickness(thickness)
+        }
+
+        val ringContainer = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(ringSize, ringSize).apply {
-                setMargins(margin, 0, margin, 0)
+                setMargins(ringMargin, 0, ringMargin, 0)
                 gravity = Gravity.CENTER
             }
-            setThickness(thickness)
+            addView(scoreRing)
+            addView(tabDot)
         }
 
         label = TextView(context).apply {
@@ -91,7 +120,7 @@ class HabitGroupCardView(
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
             elevation = dp(1f)
 
-            addView(scoreRing)
+            addView(ringContainer)
             addView(label)
             addView(addButtonView)
             addView(collapseButtonView)
@@ -146,8 +175,7 @@ class HabitGroupCardView(
         scoreRing.apply {
             setColor(c)
         }
-
-        collapseButtonView.collapsed = hgr.collapsed
+        refreshTabDot(hgr.tabId)
 
         if (collapseButtonView.collapsed) {
             addButtonView.visibility = GONE

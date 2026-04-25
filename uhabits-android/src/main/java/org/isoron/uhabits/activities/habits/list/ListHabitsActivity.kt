@@ -287,6 +287,9 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
             rootView.tabBar.setSelectedTab(restoredTabId)
             component.listHabitsSelectionMenu.isOnCustomTab = true
             adapter.activeTabId = restoredTabId
+            adapter.showTabDot = false
+        } else {
+            adapter.showTabDot = true
         }
 
         rootView.tabBar.listener = object : org.isoron.uhabits.activities.habits.list.tabs.TabBarView.Listener {
@@ -295,6 +298,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
                 tabManager.saveActiveTab(tabId)
                 component.listHabitsSelectionMenu.isOnCustomTab = (tabId != null)
                 adapter.activeTabId = tabId
+                adapter.showTabDot = (tabId == null)
             }
 
             override fun onTabCreated(name: String) {
@@ -304,6 +308,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
                 tabManager.saveActiveTab(tab.id)
                 component.listHabitsSelectionMenu.isOnCustomTab = true
                 adapter.activeTabId = tab.id
+                adapter.showTabDot = false
             }
 
             override fun onTabRenamed(tabId: String, newName: String) {
@@ -317,6 +322,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
                 tabManager.deleteTab(tabId)
                 component.listHabitsSelectionMenu.isOnCustomTab = false
                 adapter.activeTabId = null
+                adapter.showTabDot = true
                 rootView.tabBar.setTabs(tabManager.getAllTabs())
             }
         }

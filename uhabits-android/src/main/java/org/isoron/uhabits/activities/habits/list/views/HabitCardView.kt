@@ -136,19 +136,51 @@ class HabitCardView(
     private var innerFrame: LinearLayout
     private var label: TextView
     private var scoreRing: RingView
+    private var tabDot: View
+
+    // When true (All-tab is active), shows a small dot if this habit has a tabId.
+    var showTabDot: Boolean = false
+        set(value) {
+            field = value
+            habit?.let { refreshTabDot(it.tabId) }
+        }
+
+    private fun refreshTabDot(tabId: String?) {
+        tabDot.visibility = if (showTabDot && tabId != null) View.VISIBLE else View.GONE
+    }
 
     private var currentToggleTaskId = 0
 
     init {
+        // Build a dot drawable: small solid teal circle, works on light + dark
+        val dotDrawable = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setColor(0xFF26C6DA.toInt()) // Material Cyan 400 — visible on both themes
+        }
+        val dotSize = dp(4f).toInt()
+
+        tabDot = View(context).apply {
+            background = dotDrawable
+            layoutParams = FrameLayout.LayoutParams(dotSize, dotSize, Gravity.CENTER)
+            visibility = View.GONE
+        }
+
+        val ringSize = dp(15f).toInt()
+        val ringMargin = dp(8f).toInt()
+
         scoreRing = RingView(context).apply {
             val thickness = dp(3f)
-            val margin = dp(8f).toInt()
-            val ringSize = dp(15f).toInt()
+            layoutParams = FrameLayout.LayoutParams(ringSize, ringSize)
+            setThickness(thickness)
+        }
+
+        val ringContainer = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(ringSize, ringSize).apply {
-                setMargins(margin, 0, margin, 0)
+                setMargins(ringMargin, 0, ringMargin, 0)
                 gravity = Gravity.CENTER
             }
-            setThickness(thickness)
+            addView(scoreRing)
+            addView(tabDot)
         }
 
         label = TextView(context).apply {
@@ -195,7 +227,7 @@ class HabitCardView(
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
             elevation = dp(1f)
 
-            addView(scoreRing)
+            addView(ringContainer)
             addView(label)
             addView(checkmarkPanel)
             addView(numberPanel)
@@ -282,16 +314,17 @@ class HabitCardView(
         }
         scoreRing.apply {
             setColor(c)
-//            if (h.isSubHabit()) {
-            val rightMargin = dp(8f).toInt()
-            val ringSize = dp(15f).toInt()
-            val leftMargin = if (h.isSubHabit() == true) dp(30f).toInt() else dp(8f).toInt()
-            layoutParams = LinearLayout.LayoutParams(ringSize, ringSize).apply {
+        }
+        // Move indentation margin to the ringContainer (scoreRing is inside FrameLayout)
+        val rightMargin = dp(8f).toInt()
+        val ringSize = dp(15f).toInt()
+        val leftMargin = if (h.isSubHabit() == true) dp(30f).toInt() else dp(8f).toInt()
+        (scoreRing.parent as? FrameLayout)?.layoutParams =
+            LinearLayout.LayoutParams(ringSize, ringSize).apply {
                 setMargins(leftMargin, 0, rightMargin, 0)
                 gravity = Gravity.CENTER
             }
-//            }
-        }
+        refreshTabDot(h.tabId)
         checkmarkPanel.apply {
             color = c
             visibility = when (h.isNumerical) {

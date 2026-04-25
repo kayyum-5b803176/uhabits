@@ -22,6 +22,8 @@ import android.annotation.SuppressLint
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView.Adapter
 import org.isoron.uhabits.activities.habits.list.MAX_CHECKMARK_COUNT
+import org.isoron.uhabits.activities.habits.list.views.HabitCardView
+import org.isoron.uhabits.activities.habits.list.views.HabitGroupCardView
 import org.isoron.uhabits.core.models.Habit
 import org.isoron.uhabits.core.models.HabitGroup
 import org.isoron.uhabits.core.models.HabitList
@@ -203,6 +205,12 @@ class HabitCardListAdapter @Inject constructor(
         midnightTimer.addListener(this)
     }
 
+    /**
+     * When true (user is on "All" tab), a dot is shown on cards that belong to
+     * any tab.  Set to false on any named tab since it adds no information there.
+     */
+    var showTabDot: Boolean = false
+
     override fun onBindViewHolder(
         holder: HabitCardViewHolder,
         position: Int
@@ -215,12 +223,14 @@ class HabitCardListAdapter @Inject constructor(
             val checkmarks = cache.getCheckmarks(habit.id!!)
             val notes = cache.getNotes(habit.id!!)
             val selected = selectedHabits.contains(habit)
-            listView!!.bindCardView(holder, habit, score, checkmarks, notes, selected)
+            val cardView = listView!!.bindCardView(holder, habit, score, checkmarks, notes, selected)
+            (cardView as? HabitCardView)?.showTabDot = showTabDot
         } else {
             val habitGroup = cache.getHabitGroupByPosition(realPos)
             val score = cache.getScore(habitGroup!!.id!!)
             val selected = selectedHabitGroups.contains(habitGroup)
-            listView!!.bindGroupCardView(holder, habitGroup, score, selected)
+            val cardView = listView!!.bindGroupCardView(holder, habitGroup, score, selected)
+            (cardView as? HabitGroupCardView)?.showTabDot = showTabDot
         }
     }
 
