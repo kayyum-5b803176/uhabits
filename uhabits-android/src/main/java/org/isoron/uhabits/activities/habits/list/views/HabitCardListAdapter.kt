@@ -171,11 +171,11 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     fun getHabit(position: Int): Habit? {
-        return cache.getHabitByPosition(position)
+        return cache.getHabitByPosition(virtualToReal(position))
     }
 
     fun getHabitGroup(position: Int): HabitGroup? {
-        return cache.getHabitGroupByPosition(position)
+        return cache.getHabitGroupByPosition(virtualToReal(position))
     }
 
     override fun getItemCount(): Int =
@@ -344,7 +344,7 @@ class HabitCardListAdapter @Inject constructor(
      * @param to   the habit that currently occupies the desired position
      */
     fun performReorder(from: Int, to: Int) {
-        cache.reorder(from, to)
+        cache.reorder(virtualToReal(from), virtualToReal(to))
     }
 
     override fun refresh() {
@@ -388,8 +388,9 @@ class HabitCardListAdapter @Inject constructor(
      */
     @SuppressLint("NotifyDataSetChanged")
     fun toggleSelection(position: Int) {
-        val h = cache.getHabitByPosition(position)
-        val hgr = cache.getHabitGroupByPosition(position)
+        val realPos = virtualToReal(position)
+        val h = cache.getHabitByPosition(realPos)
+        val hgr = cache.getHabitGroupByPosition(realPos)
         if (h != null) {
             val k = selectedHabits.indexOf(h)
             if (k < 0) selectedHabits.add(h) else selectedHabits.remove(h)
