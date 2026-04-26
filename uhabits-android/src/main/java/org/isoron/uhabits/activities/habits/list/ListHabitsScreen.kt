@@ -351,63 +351,145 @@ class ListHabitsScreen
         val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.US)
             .format(java.util.Date())
         val fileName = "Loop Habits Backup $dateStr.db"
-        val intent = intentFactory.createDocument(fileName)
-        activity.startActivityForResult(intent, REQUEST_CREATE_DOCUMENT)
+        activity.startActivityForResult(intentFactory.createDocument(fileName), REQUEST_CREATE_DOCUMENT)
     }
 
     /**
-     * 1. Syncs all SharedPreferences into the DB `settings` table so they are
-     *    included in the backup.
-     * 2. Copies the DB file to the SAF URI chosen by the user.
+     * Export — writes settings to a *temp copy* of the DB so the live DB
+     * is never modified.  Steps:
+     * 1. Copy live DB → temp file
+     * 2. Open temp file and write all SharedPreferences with type-prefixed values
+     * 3. Stream temp file to SAF URI chosen by the user
+     * 4. Delete temp file
+     *
+     * If anything goes wrong the live DB is completely untouched.
      */
     private fun onCreateDocumentResult(resultCode: Int, data: Intent?) {
         if (data?.data == null || resultCode != Activity.RESULT_OK) return
         val destUri = data.data!!
+        var tempExport: File? = null
         try {
-            // Write all app settings into the DB before copying so the backup is self-contained
-            tabManager.syncPrefsToDb(activity)
+            val cacheDir = activity.externalCacheDir
+            val liveDb  = DatabaseUtils.getDatabaseFile(activity)
 
-            val dbFile = DatabaseUtils.getDatabaseFile(activity)
-            activity.contentResolver.openOutputStream(destUri)!!.buffered().use { out ->
-                dbFile.inputStream().use { it.copyTo(out) }
+            // 1. Make a temp copy of the live DB
+            tempExport = File.createTempFile("export", ".db", cacheDir)
+            liveDb.copyTo(tempExport!!, overwrite = true)
+
+            // 2. Open the COPY and write settings into it (never touches live DB)
+            android.database.sqlite.SQLiteDatabase.openDatabase(
+                tempExport!!.absolutePath,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READWRITE
+            ).use { copyDb ->
+                tabManager.syncPrefsToDb(copyDb)
             }
+
+            // 3. Stream the enriched copy to the SAF URI
+            activity.contentResolver.openOutputStream(destUri)!!.buffered().use { out ->
+                tempExport!!.inputStream().use { it.copyTo(out) }
+            }
+
             activity.showMessage(activity.resources.getString(R.string.database_exported))
         } catch (e: Exception) {
             activity.showMessage(activity.resources.getString(R.string.could_not_export))
-            e.printStackTrace()
+            android.util.Log.e("ListHabitsScreen", "Export failed", e)
+        } finally {
+            tempExport?.delete()
         }
     }
 
     /**
-     * Imports a backup DB by **directly replacing** the current DB file.
-     * This ensures 100% fidelity — tabs table, settings table, tab_id columns,
-     * and group collapsed state are all restored exactly as exported.
+     * Import — direct file replace with full rollback on any failure.  Steps:
+     * 1. Copy SAF stream → temp import file
+     * 2. Validate: must be SQLite, version ≤ current
+     * 3. Back up current DB → rollback file
+     * 4. Replace live DB file with import file
+     * 5. Open new DB and restore SharedPreferences (graceful if settings table absent)
+     * 6. Restart activity
      *
-     * After the file is replaced:
-     * 1. Reads the `settings` table and writes values back to SharedPreferences.
-     * 2. Restarts the activity so all in-memory state is rebuilt from the new DB.
+     * On ANY failure after step 4: restore rollback file and report error.
      */
     private fun onOpenDocumentResult(resultCode: Int, data: Intent?) {
         if (data == null || resultCode != Activity.RESULT_OK) return
+
+        var tempImport: File? = null
+        var rollback:   File? = null
+
         try {
-            val inStream = activity.contentResolver.openInputStream(data.data!!)!!
-            val cacheDir = activity.externalCacheDir
-            val tempFile = File.createTempFile("import", ".db", cacheDir)
-            inStream.use { it.copyTo(tempFile.outputStream()) }
+            val cacheDir = activity.externalCacheDir!!
 
-            // Direct file replace — preserves every table including tabs + settings
-            DatabaseUtils.replaceDatabase(activity, tempFile)
-            tempFile.delete()
+            // 1. Copy SAF stream to temp file
+            tempImport = File.createTempFile("import", ".db", cacheDir)
+            activity.contentResolver.openInputStream(data.data!!)!!.use { ins ->
+                ins.copyTo(tempImport!!.outputStream())
+            }
 
-            // Restore SharedPreferences from the settings table in the new DB
-            tabManager.syncPrefsFromDb(activity)
+            // 2. Validate
+            if (!isSQLiteFile(tempImport!!)) {
+                activity.showMessage(activity.resources.getString(R.string.file_not_recognized))
+                return
+            }
+            val importVersion = android.database.sqlite.SQLiteDatabase.openDatabase(
+                tempImport!!.absolutePath, null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            ).use { it.version }
+            if (importVersion > org.isoron.uhabits.core.DATABASE_VERSION) {
+                activity.showMessage(activity.resources.getString(R.string.could_not_import))
+                return
+            }
 
-            // Full restart so the habit list, tab bar, and all state reload from new DB
+            // 3. Back up current DB (rollback plan)
+            val liveDb = DatabaseUtils.getDatabaseFile(activity)
+            rollback = File.createTempFile("rollback", ".db", cacheDir)
+            liveDb.copyTo(rollback!!, overwrite = true)
+
+            // 4. Replace live DB
+            DatabaseUtils.replaceDatabase(activity, tempImport!!)
+
+            // 5. Restore SharedPreferences from new DB — graceful on any error
+            try {
+                android.database.sqlite.SQLiteDatabase.openDatabase(
+                    DatabaseUtils.getDatabaseFile(activity).absolutePath,
+                    null,
+                    android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+                ).use { newDb ->
+                    tabManager.syncPrefsFromDb(newDb)
+                }
+            } catch (e: Exception) {
+                // Prefs restore failed — not fatal, app is still usable
+                android.util.Log.w("ListHabitsScreen", "Pref restore skipped: ${e.message}")
+            }
+
+            // 6. Restart
             activity.showMessage(activity.resources.getString(R.string.habits_imported))
             activity.restartWithFade(ListHabitsActivity::class.java)
-        } catch (e: IOException) {
+
+        } catch (e: Exception) {
+            android.util.Log.e("ListHabitsScreen", "Import failed", e)
+            // Rollback: restore original DB if we already replaced it
+            rollback?.let { rb ->
+                try {
+                    DatabaseUtils.replaceDatabase(activity, rb)
+                } catch (re: Exception) {
+                    android.util.Log.e("ListHabitsScreen", "Rollback also failed", re)
+                }
+            }
             activity.showMessage(activity.resources.getString(R.string.could_not_import))
-            e.printStackTrace()
+        } finally {
+            tempImport?.delete()
+            rollback?.delete()
         }
+    }
+
+    /** Returns true if [file] starts with the SQLite3 magic header bytes. */
+    private fun isSQLiteFile(file: File): Boolean {
+        if (file.length() < 16) return false
+        return try {
+            file.inputStream().use { s ->
+                val magic = "SQLite format 3 "
+                magic.all { s.read() == it.code }
+            }
+        } catch (e: Exception) { false }
     }
 }

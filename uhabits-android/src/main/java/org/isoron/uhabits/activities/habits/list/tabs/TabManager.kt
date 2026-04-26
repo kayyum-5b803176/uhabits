@@ -6,17 +6,13 @@ import org.isoron.uhabits.utils.DatabaseUtils
 
 /**
  * Manages tab metadata (id, name, order) and the active-tab setting.
- *
  * All data lives in the SQLite database:
- *   - Table `tabs`    : id TEXT PK, name TEXT, position INTEGER
- *   - Table `settings`: key TEXT PK, value TEXT   (key = "active_tab")
- *
- * Because everything is in the DB, a plain DB backup/restore automatically
- * includes all tab data — no JSON sidecar or ZIP archive needed.
+ *   - Table `tabs`     : id TEXT PK, name TEXT, position INTEGER
+ *   - Table `settings` : key TEXT PK, value TEXT
  */
 class TabManager(context: Context) {
 
-    // DatabaseUtils.openDatabase() is safe after HabitsApplication.onCreate().
+    private val appContext = context.applicationContext
     private val db: SQLiteDatabase get() = DatabaseUtils.openDatabase()
 
     // -----------------------------------------------------------------------
@@ -25,22 +21,20 @@ class TabManager(context: Context) {
 
     @Synchronized
     fun getAllTabs(): List<HabitTab> {
-        val result = mutableListOf<HabitTab>()
-        db.rawQuery(
-            "SELECT id, name FROM tabs ORDER BY position ASC", null
-        ).use { c ->
-            while (c.moveToNext()) {
-                result.add(HabitTab(id = c.getString(0), name = c.getString(1)))
+        return try {
+            val result = mutableListOf<HabitTab>()
+            db.rawQuery("SELECT id, name, position FROM tabs ORDER BY position ASC", null).use { c ->
+                while (c.moveToNext()) {
+                    result.add(HabitTab(id = c.getString(0), name = c.getString(1), position = c.getInt(2)))
+                }
             }
-        }
-        return result
+            result
+        } catch (e: Exception) { emptyList() }
     }
 
-    @Synchronized
-    fun getTab(id: String): HabitTab? = getAllTabs().firstOrNull { it.id == id }
+    @Synchronized fun getTab(id: String): HabitTab? = getAllTabs().firstOrNull { it.id == id }
 
-    @Synchronized
-    fun getDefaultTabId(): String? = getAllTabs().firstOrNull()?.id
+    @Synchronized fun getDefaultTabId(): String? = getAllTabs().firstOrNull()?.id
 
     // -----------------------------------------------------------------------
     // Tab mutations
@@ -50,10 +44,7 @@ class TabManager(context: Context) {
     fun addTab(name: String): HabitTab {
         val id = java.util.UUID.randomUUID().toString()
         val position = (getAllTabs().maxByOrNull { it.position }?.position ?: -1) + 1
-        db.execSQL(
-            "INSERT INTO tabs (id, name, position) VALUES (?, ?, ?)",
-            arrayOf(id, name.trim(), position)
-        )
+        db.execSQL("INSERT INTO tabs (id, name, position) VALUES (?, ?, ?)", arrayOf(id, name.trim(), position))
         return HabitTab(id = id, name = name.trim(), position = position)
     }
 
@@ -62,19 +53,11 @@ class TabManager(context: Context) {
         db.execSQL("UPDATE tabs SET name = ? WHERE id = ?", arrayOf(newName.trim(), id))
     }
 
-    /**
-     * Deletes the tab. The caller is responsible for clearing `tab_id` on
-     * all habits/groups that belonged to this tab so they become unassigned.
-     */
     @Synchronized
     fun deleteTab(id: String) {
         db.execSQL("DELETE FROM tabs WHERE id = ?", arrayOf(id))
-        // If this was the active tab, clear the setting
-        db.rawQuery("SELECT value FROM settings WHERE key = 'active_tab'", null).use { c ->
-            if (c.moveToFirst() && c.getString(0) == id) {
-                db.execSQL("DELETE FROM settings WHERE key = 'active_tab'")
-            }
-        }
+        val active = loadActiveTab()
+        if (active == id) db.execSQL("DELETE FROM settings WHERE key = 'active_tab'")
     }
 
     // -----------------------------------------------------------------------
@@ -83,98 +66,117 @@ class TabManager(context: Context) {
 
     @Synchronized
     fun saveActiveTab(tabId: String?) {
-        if (tabId == null) {
-            db.execSQL("DELETE FROM settings WHERE key = 'active_tab'")
-        } else {
-            db.execSQL(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES ('active_tab', ?)",
-                arrayOf(tabId)
-            )
-        }
+        try {
+            if (tabId == null) {
+                db.execSQL("DELETE FROM settings WHERE key = 'active_tab'")
+            } else {
+                db.execSQL(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('active_tab', ?)",
+                    arrayOf(tabId)
+                )
+            }
+        } catch (e: Exception) { /* table may not exist on very old DB */ }
     }
 
     @Synchronized
     fun loadActiveTab(): String? {
-        db.rawQuery(
-            "SELECT value FROM settings WHERE key = 'active_tab'", null
-        ).use { c ->
-            if (!c.moveToFirst()) return null
-            val saved = c.getString(0) ?: return null
-            // Guard: tab must still exist
-            return if (getAllTabs().any { it.id == saved }) saved else null
+        return try {
+            db.rawQuery("SELECT value FROM settings WHERE key = 'active_tab'", null).use { c ->
+                if (!c.moveToFirst()) return null
+                val saved = c.getString(0) ?: return null
+                if (getAllTabs().any { it.id == saved }) saved else null
+            }
+        } catch (e: Exception) { null }
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings backup — type-prefixed for safe restore
+    // -----------------------------------------------------------------------
+
+    /**
+     * Writes all SharedPreferences into [targetDb] with type-prefixed values
+     * (e.g. `bool:true`, `int:5`). Uses a copy DB so the live DB is never
+     * touched during export.
+     */
+    fun syncPrefsToDb(targetDb: SQLiteDatabase) {
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(appContext)
+        try {
+            targetDb.execSQL(
+                "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
+            )
+            prefs.all.forEach { (key, value) ->
+                val dbValue = when (value) {
+                    null      -> return@forEach
+                    is Boolean -> "bool:$value"
+                    is Int     -> "int:$value"
+                    is Long    -> "long:$value"
+                    is Float   -> "float:$value"
+                    is String  -> "string:$value"
+                    is Set<*>  -> "set:${value.joinToString("|")}"
+                    else       -> return@forEach
+                }
+                targetDb.execSQL(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                    arrayOf("$PREF_PREFIX$key", dbValue)
+                )
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("TabManager", "syncPrefsToDb failed", e)
+        }
+    }
+
+    /**
+     * Reads all `pref:*` rows from [sourceDb] and writes them to SharedPreferences.
+     * Gracefully skips if the `settings` table does not exist (old backup).
+     * Type is encoded in the value prefix — no assumptions about existing keys.
+     */
+    fun syncPrefsFromDb(sourceDb: SQLiteDatabase) {
+        // Check table exists first — old backups won't have it
+        val tableExists = sourceDb.rawQuery(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='settings'", null
+        ).use { c -> c.moveToFirst() && c.getInt(0) > 0 }
+        if (!tableExists) return
+
+        val editor = androidx.preference.PreferenceManager
+            .getDefaultSharedPreferences(appContext).edit()
+
+        try {
+            sourceDb.rawQuery(
+                "SELECT key, value FROM settings WHERE key LIKE ?",
+                arrayOf("$PREF_PREFIX%")
+            ).use { c ->
+                while (c.moveToNext()) {
+                    val key = c.getString(0).removePrefix(PREF_PREFIX)
+                    val raw = c.getString(1) ?: continue
+                    val colonIdx = raw.indexOf(':')
+                    if (colonIdx < 0) continue
+                    val type   = raw.substring(0, colonIdx)
+                    val strVal = raw.substring(colonIdx + 1)
+                    try {
+                        when (type) {
+                            "bool"   -> editor.putBoolean(key, strVal == "true")
+                            "int"    -> strVal.toIntOrNull()?.let { editor.putInt(key, it) }
+                            "long"   -> strVal.toLongOrNull()?.let { editor.putLong(key, it) }
+                            "float"  -> strVal.toFloatOrNull()?.let { editor.putFloat(key, it) }
+                            "string" -> editor.putString(key, strVal)
+                            "set"    -> editor.putStringSet(
+                                key, if (strVal.isEmpty()) emptySet()
+                                     else strVal.split("|").toSet()
+                            )
+                        }
+                    } catch (e: Exception) {
+                        // Skip individual corrupt keys — never crash on restore
+                        android.util.Log.w("TabManager", "Skipping pref key=$key: ${e.message}")
+                    }
+                }
+            }
+            editor.apply()
+        } catch (e: Exception) {
+            android.util.Log.e("TabManager", "syncPrefsFromDb failed", e)
         }
     }
 
     companion object {
-        const val BACKUP_ENTRY_DB = "uhabits.db"
-
-        // Prefix used to distinguish preference rows from other settings rows
         private const val PREF_PREFIX = "pref:"
-    }
-
-    // -----------------------------------------------------------------------
-    // Settings backup — syncs app SharedPreferences ↔ DB settings table
-    // -----------------------------------------------------------------------
-
-    /**
-     * Writes every key-value pair from [PreferenceManager.getDefaultSharedPreferences]
-     * into the `settings` table before export. Called right before the DB file
-     * is copied so the backup is self-contained.
-     */
-    fun syncPrefsToDb(context: Context) {
-        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
-        val editor = db  // db is already open
-        prefs.all.forEach { (key, value) ->
-            val dbKey = "$PREF_PREFIX$key"
-            val dbValue = when (value) {
-                null -> return@forEach
-                is Boolean -> if (value) "true" else "false"
-                is Int -> value.toString()
-                is Long -> value.toString()
-                is Float -> value.toString()
-                is String -> value
-                is Set<*> -> value.joinToString("|")
-                else -> return@forEach
-            }
-            db.execSQL(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                arrayOf(dbKey, dbValue)
-            )
-        }
-    }
-
-    /**
-     * Reads all preference rows from the `settings` table and applies them to
-     * [PreferenceManager.getDefaultSharedPreferences]. Called after DB replace
-     * so all app settings match the backup.
-     *
-     * Only rows whose key starts with [PREF_PREFIX] are touched; other rows
-     * (e.g. `active_tab`) are left alone.
-     */
-    fun syncPrefsFromDb(context: Context) {
-        val sharedPrefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
-        val editor = sharedPrefs.edit()
-
-        db.rawQuery(
-            "SELECT key, value FROM settings WHERE key LIKE '$PREF_PREFIX%'", null
-        ).use { c ->
-            while (c.moveToNext()) {
-                val key = c.getString(0).removePrefix(PREF_PREFIX)
-                val raw = c.getString(1) ?: continue
-
-                // Try to determine the existing type to restore with the right type.
-                // If the key doesn't exist yet, fall back to String.
-                val existing = sharedPrefs.all[key]
-                when (existing) {
-                    is Boolean -> editor.putBoolean(key, raw == "true")
-                    is Int -> raw.toIntOrNull()?.let { editor.putInt(key, it) }
-                    is Long -> raw.toLongOrNull()?.let { editor.putLong(key, it) }
-                    is Float -> raw.toFloatOrNull()?.let { editor.putFloat(key, it) }
-                    is Set<*> -> editor.putStringSet(key, raw.split("|").toSet())
-                    else -> editor.putString(key, raw) // new keys default to String
-                }
-            }
-        }
-        editor.apply()
     }
 }
