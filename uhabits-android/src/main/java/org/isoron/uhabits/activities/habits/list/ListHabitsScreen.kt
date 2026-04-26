@@ -109,6 +109,9 @@ class ListHabitsScreen
 
     val activity = (context as AppCompatActivity)
 
+    /** Set by [ListHabitsActivity] — used to sync prefs ↔ DB on export/import. */
+    lateinit var tabManager: org.isoron.uhabits.activities.habits.list.tabs.TabManager
+
     fun onAttached() {
         commandRunner.addListener(this)
     }
@@ -127,21 +130,6 @@ class ListHabitsScreen
             REQUEST_OPEN_DOCUMENT -> onOpenDocumentResult(resultCode, data)
             REQUEST_CREATE_DOCUMENT -> onCreateDocumentResult(resultCode, data)
             REQUEST_SETTINGS -> onSettingsResult(resultCode)
-        }
-    }
-
-    private fun onOpenDocumentResult(resultCode: Int, data: Intent?) {
-        if (data == null) return
-        if (resultCode != Activity.RESULT_OK) return
-        try {
-            val inStream = activity.contentResolver.openInputStream(data.data!!)!!
-            val cacheDir = activity.externalCacheDir
-            val tempFile = File.createTempFile("import", "", cacheDir)
-            inStream.copyTo(tempFile)
-            onImportData(tempFile) { tempFile.delete() }
-        } catch (e: IOException) {
-            activity.showMessage(activity.resources.getString(R.string.could_not_import))
-            e.printStackTrace()
         }
     }
 
@@ -332,6 +320,12 @@ class ListHabitsScreen
         }
     }
 
+    /**
+     * Optional callback invoked on the main thread after a successful import.
+     * [ListHabitsActivity] uses this to reload the tab bar from the restored DB.
+     */
+    var onImportSuccess: (() -> Unit)? = null
+
     private fun onImportData(file: File, onFinished: () -> Unit) {
         taskRunner.execute(
             importTaskFactory.create(file) { result ->
@@ -339,6 +333,7 @@ class ListHabitsScreen
                     ImportDataTask.SUCCESS -> {
                         adapter.refresh()
                         activity.showMessage(activity.resources.getString(R.string.habits_imported))
+                        onImportSuccess?.invoke()
                     }
                     ImportDataTask.NOT_RECOGNIZED -> {
                         activity.showMessage(activity.resources.getString(R.string.file_not_recognized))
@@ -353,9 +348,7 @@ class ListHabitsScreen
     }
 
     private fun onExportDB() {
-        // Build a default filename with today's date and launch the SAF picker
-        // so the user can choose exactly where the backup is saved.
-        val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.US)
             .format(java.util.Date())
         val fileName = "Loop Habits Backup $dateStr.db"
         val intent = intentFactory.createDocument(fileName)
@@ -363,20 +356,57 @@ class ListHabitsScreen
     }
 
     /**
-     * Called when the user has chosen a save location via SAF.
-     * Copies the live database file into the URI returned by the picker.
+     * 1. Syncs all SharedPreferences into the DB `settings` table so they are
+     *    included in the backup.
+     * 2. Copies the DB file to the SAF URI chosen by the user.
      */
     private fun onCreateDocumentResult(resultCode: Int, data: Intent?) {
         if (data?.data == null || resultCode != Activity.RESULT_OK) return
         val destUri = data.data!!
         try {
-            val dbFile = org.isoron.uhabits.utils.DatabaseUtils.getDatabaseFile(activity)
-            activity.contentResolver.openOutputStream(destUri)!!.use { out ->
+            // Write all app settings into the DB before copying so the backup is self-contained
+            tabManager.syncPrefsToDb(activity)
+
+            val dbFile = DatabaseUtils.getDatabaseFile(activity)
+            activity.contentResolver.openOutputStream(destUri)!!.buffered().use { out ->
                 dbFile.inputStream().use { it.copyTo(out) }
             }
             activity.showMessage(activity.resources.getString(R.string.database_exported))
         } catch (e: Exception) {
             activity.showMessage(activity.resources.getString(R.string.could_not_export))
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Imports a backup DB by **directly replacing** the current DB file.
+     * This ensures 100% fidelity — tabs table, settings table, tab_id columns,
+     * and group collapsed state are all restored exactly as exported.
+     *
+     * After the file is replaced:
+     * 1. Reads the `settings` table and writes values back to SharedPreferences.
+     * 2. Restarts the activity so all in-memory state is rebuilt from the new DB.
+     */
+    private fun onOpenDocumentResult(resultCode: Int, data: Intent?) {
+        if (data == null || resultCode != Activity.RESULT_OK) return
+        try {
+            val inStream = activity.contentResolver.openInputStream(data.data!!)!!
+            val cacheDir = activity.externalCacheDir
+            val tempFile = File.createTempFile("import", ".db", cacheDir)
+            inStream.use { it.copyTo(tempFile.outputStream()) }
+
+            // Direct file replace — preserves every table including tabs + settings
+            DatabaseUtils.replaceDatabase(activity, tempFile)
+            tempFile.delete()
+
+            // Restore SharedPreferences from the settings table in the new DB
+            tabManager.syncPrefsFromDb(activity)
+
+            // Full restart so the habit list, tab bar, and all state reload from new DB
+            activity.showMessage(activity.resources.getString(R.string.habits_imported))
+            activity.restartWithFade(ListHabitsActivity::class.java)
+        } catch (e: IOException) {
+            activity.showMessage(activity.resources.getString(R.string.could_not_import))
             e.printStackTrace()
         }
     }

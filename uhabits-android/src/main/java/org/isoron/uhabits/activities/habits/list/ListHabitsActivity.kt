@@ -121,6 +121,16 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
 
         // ---- Tab feature ----
         tabManager = TabManager(this)
+        screen.tabManager = tabManager
+        screen.onImportSuccess = {
+            // Reload the tab bar from the restored DB so imported tabs are visible
+            rootView.tabBar.setTabs(tabManager.getAllTabs())
+            val restoredActiveTabId = tabManager.loadActiveTab()
+            rootView.tabBar.setSelectedTab(restoredActiveTabId)
+            component.listHabitsSelectionMenu.isOnCustomTab = (restoredActiveTabId != null)
+            adapter.activeTabId = restoredActiveTabId
+            adapter.showTabDot = (restoredActiveTabId == null)
+        }
         setupTabBar()
         setupMoveToTabCallback()
         // Snapshot the current max id NOW so the very first onResume

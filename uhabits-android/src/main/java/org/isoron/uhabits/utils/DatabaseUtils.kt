@@ -73,4 +73,27 @@ object DatabaseUtils {
         checkNotNull(opener)
         return opener!!.writableDatabase
     }
+
+    /**
+     * Closes the current DB connection, replaces the DB file with [source],
+     * and deletes any WAL/SHM files so the new file is used cleanly.
+     * Call [openDatabase] or restart the Activity to reopen.
+     */
+    @JvmStatic
+    @Throws(IOException::class)
+    fun replaceDatabase(context: Context, source: File) {
+        // Close the SQLiteOpenHelper so Android releases its file lock
+        opener?.close()
+
+        val dest = getDatabaseFile(context)
+        source.copyTo(dest, overwrite = true)
+
+        // Remove WAL/SHM sidecar files from the OLD connection so SQLite
+        // does not try to replay old journal entries into the new file.
+        File("${dest.path}-wal").delete()
+        File("${dest.path}-shm").delete()
+
+        // Re-init so the next openDatabase() call works correctly
+        opener = HabitsDatabaseOpener(context, databaseFilename, DATABASE_VERSION)
+    }
 }
