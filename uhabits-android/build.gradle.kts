@@ -115,7 +115,7 @@ dependencies {
     androidTestImplementation("androidx.annotation:annotation:1.7.1")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.2.0")
-    androidTestImplementation("androidx.test:rules:1.5.0")
+    androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
     compileOnly("javax.annotation:jsr250-api:1.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
