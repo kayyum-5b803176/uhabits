@@ -48,7 +48,7 @@ android {
 
     defaultConfig {
         versionCode = 20202
-        versionName = "2.5.2"
+        versionName = "2.6.0"
         minSdk = 28
         targetSdk = 34
         // targetSdkPreview = "VanillaIceCream"
@@ -138,6 +138,7 @@ dependencies {
     implementation("androidx.legacy:legacy-support-v4:1.0.0")
     implementation("com.google.android.material:material:1.11.0")
     implementation("com.opencsv:opencsv:5.9")
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation(project(":uhabits-core"))
     kapt("com.google.dagger:dagger-compiler:$daggerVersion")
     kaptAndroidTest("com.google.dagger:dagger-compiler:$daggerVersion")

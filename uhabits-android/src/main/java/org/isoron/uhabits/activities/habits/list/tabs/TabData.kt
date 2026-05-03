@@ -10,5 +10,6 @@ package org.isoron.uhabits.activities.habits.list.tabs
 data class HabitTab(
     val id: String,
     var name: String,
-    val position: Int = 0
+    val position: Int = 0,
+    val isPrivate: Boolean = false
 )

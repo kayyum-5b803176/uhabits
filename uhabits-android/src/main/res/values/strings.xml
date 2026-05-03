@@ -39,6 +39,23 @@
     <string name="tab_rename">Rename</string>
     <string name="tab_delete_confirm_title">Delete tab</string>
     <string name="tab_delete_confirm_message">Delete tab \"%s\"? Habits in this tab won\'t be deleted.</string>
+
+    <!-- Private tab -->
+    <string name="tab_private_label">Private tab (requires PIN / biometric)</string>
+    <string name="tab_make_private">Make private</string>
+    <string name="tab_make_public">Remove privacy</string>
+    <string name="tab_change_pin">Change PIN</string>
+    <string name="private_tab_auth_title">Private Tab</string>
+    <string name="private_tab_auth_subtitle">Authenticate to access your private habits</string>
+    <string name="private_tab_use_pin">Use PIN</string>
+    <string name="private_tab_enter_pin">Enter PIN</string>
+    <string name="private_tab_set_pin">Set PIN</string>
+    <string name="private_tab_set_pin_message">Choose a 4-digit PIN as a fallback when biometric is unavailable.</string>
+    <string name="private_tab_confirm_pin">Confirm PIN</string>
+    <string name="private_tab_next">Next</string>
+    <string name="private_tab_pin_too_short">PIN must be exactly 4 digits.</string>
+    <string name="private_tab_pin_wrong">Incorrect PIN. Please try again.</string>
+    <string name="private_tab_pin_mismatch">PINs don\'t match. Please try again.</string>
     <string name="add_habit">Add habit</string>
     <string name="color_picker_default_title">Change color</string>
     <string name="toast_habit_created">Habit created</string>

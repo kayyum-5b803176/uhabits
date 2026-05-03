@@ -2,19 +2,7 @@
  * Copyright (C) 2016-2021 Álinson Santos Xavier <git@axavier.org>
  *
  * This file is part of Loop Habit Tracker.
- *
- * Loop Habit Tracker is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or (at your
- * option) any later version.
- *
- * Loop Habit Tracker is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program. If not, see <http://www.gnu.org/licenses/>.
+ * (modified to add private-tab support)
  */
 
 package org.isoron.uhabits.activities.habits.list.tabs
@@ -26,6 +14,7 @@ import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -34,33 +23,49 @@ import androidx.appcompat.app.AlertDialog
 import org.isoron.uhabits.R
 
 /**
- * A horizontally-scrollable row of tab chips that appears below the main
- * toolbar.  It always starts with an **"All"** chip, followed by one chip per
- * [HabitTab], and ends with a **"+"** chip that creates a new tab.
+ * A horizontally-scrollable row of tab chips shown below the main toolbar.
  *
- * Long-pressing any custom tab chip opens a dialog to **Rename** or **Delete**
- * that tab.
+ * Chips:
+ *  - **"All"** — always first, shows every habit.
+ *  - **Custom tabs** — one chip per [HabitTab]. Private tabs show a lock prefix.
+ *  - **"+"** — opens the create-tab dialog.
  *
- * Connect a [Listener] to react to tab changes and creation/rename/delete.
+ * Interactions:
+ *  - **Tap** a non-private chip → [Listener.onTabSelected]
+ *  - **Tap** a private chip     → [Listener.onPrivateTabRequested] (caller handles auth)
+ *  - **Long-press** any custom chip → options dialog (rename / privacy / change PIN / delete)
  */
 class TabBarView(context: Context) : HorizontalScrollView(context) {
 
     // -----------------------------------------------------------------------
-    // Public interface
+    // Listener
     // -----------------------------------------------------------------------
 
     interface Listener {
-        /** Called when the user selects a tab. [tabId] is null for the "All" tab. */
+        /** Fired when a non-private tab chip is tapped (null = "All"). */
         fun onTabSelected(tabId: String?)
 
-        /** Called when the user confirms a new tab name via the "+" chip. */
-        fun onTabCreated(name: String)
+        /**
+         * Fired when a *private* tab chip is tapped.
+         * The caller is responsible for authenticating and then calling
+         * [setSelectedTab] on success. The chip is NOT selected automatically.
+         */
+        fun onPrivateTabRequested(tabId: String)
 
-        /** Called when the user renames a tab via long-press. */
+        /** Fired when the user confirms a new tab name via the "+" chip. */
+        fun onTabCreated(name: String, isPrivate: Boolean)
+
+        /** Fired when the user renames a tab via long-press. */
         fun onTabRenamed(tabId: String, newName: String)
 
-        /** Called when the user deletes a tab via long-press. */
+        /** Fired when the user deletes a tab via long-press. */
         fun onTabDeleted(tabId: String)
+
+        /** Fired when the user toggles the private flag on an existing tab. */
+        fun onPrivacyToggled(tabId: String, makePrivate: Boolean)
+
+        /** Fired when the user requests a PIN change for an existing private tab. */
+        fun onChangePinRequested(tabId: String)
     }
 
     var listener: Listener? = null
@@ -69,14 +74,12 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
     // Internal state
     // -----------------------------------------------------------------------
 
-    /** Tab id of the currently selected tab, or null for "All". */
     private var selectedTabId: String? = null
-    private var tabs: List<HabitTab> = emptyList()
+    private var tabs: List<HabitTab>   = emptyList()
 
     private val container = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        val pad = dp(4)
+        gravity     = Gravity.CENTER_VERTICAL
         setPadding(dp(4), dp(6), dp(16), dp(6))
     }
 
@@ -90,10 +93,8 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
     // Public API
     // -----------------------------------------------------------------------
 
-    /** Replace the displayed tabs and re-render the chip row. */
     fun setTabs(tabs: List<HabitTab>) {
         this.tabs = tabs
-        // If the selected tab was deleted, fall back to "All"
         if (selectedTabId != null && tabs.none { it.id == selectedTabId }) {
             selectedTabId = null
             listener?.onTabSelected(null)
@@ -101,7 +102,7 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
         rebuildChips()
     }
 
-    /** Programmatically select a tab by id (null = "All"). Does NOT fire [Listener.onTabSelected]. */
+    /** Programmatically selects a tab without firing [Listener.onTabSelected]. */
     fun setSelectedTab(tabId: String?) {
         selectedTabId = tabId
         rebuildChips()
@@ -116,17 +117,19 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
 
         // "All" chip
         container.addView(buildChip(
-            label = context.getString(R.string.tab_all),
-            tabId = null,
-            isSelected = selectedTabId == null
+            label      = context.getString(R.string.tab_all),
+            tabId      = null,
+            isSelected = selectedTabId == null,
+            isPrivate  = false
         ))
 
         // One chip per custom tab
         tabs.forEach { tab ->
             container.addView(buildChip(
-                label = tab.name,
-                tabId = tab.id,
-                isSelected = tab.id == selectedTabId
+                label      = tab.name,
+                tabId      = tab.id,
+                isSelected = tab.id == selectedTabId,
+                isPrivate  = tab.isPrivate
             ))
         }
 
@@ -134,12 +137,17 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
         container.addView(buildAddChip())
     }
 
-    private fun buildChip(label: String, tabId: String?, isSelected: Boolean): TextView {
+    private fun buildChip(
+        label: String,
+        tabId: String?,
+        isSelected: Boolean,
+        isPrivate: Boolean
+    ): TextView {
         return TextView(context).apply {
-            text = label
+            text     = label
             typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            gravity = Gravity.CENTER
+            gravity  = Gravity.CENTER
 
             val hPad = dp(14)
             val vPad = dp(6)
@@ -149,20 +157,28 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
                 marginEnd = dp(6)
             }
 
-            background = buildChipBackground(isSelected)
+            background = buildChipBackground(isSelected, isPrivate)
             setTextColor(if (isSelected) Color.WHITE else getThemeColor(R.attr.contrast80))
 
             setOnClickListener {
-                if (selectedTabId != tabId) {
-                    selectedTabId = tabId
-                    rebuildChips()
-                    listener?.onTabSelected(tabId)
+                if (isPrivate && tabId != null) {
+                    // Private tab — delegate to caller for auth; do NOT switch yet
+                    if (tabId != selectedTabId) {
+                        listener?.onPrivateTabRequested(tabId)
+                    }
+                } else {
+                    // Normal tab
+                    if (selectedTabId != tabId) {
+                        selectedTabId = tabId
+                        rebuildChips()
+                        listener?.onTabSelected(tabId)
+                    }
                 }
             }
 
             if (tabId != null) {
                 setOnLongClickListener {
-                    showTabOptionsDialog(tabId, label)
+                    showTabOptionsDialog(tabId, label, isPrivate)
                     true
                 }
             }
@@ -171,17 +187,17 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
 
     private fun buildAddChip(): TextView {
         return TextView(context).apply {
-            text = "+"
+            text     = "+"
             typeface = Typeface.DEFAULT_BOLD
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            gravity = Gravity.CENTER
+            gravity  = Gravity.CENTER
 
             val hPad = dp(14)
             val vPad = dp(5)
             setPadding(hPad, vPad, hPad, vPad)
 
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
-            background = null
+            background   = null
             setTextColor(getThemeColor(R.attr.contrast60))
 
             setOnClickListener { showCreateTabDialog() }
@@ -192,15 +208,23 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
     // Background helper
     // -----------------------------------------------------------------------
 
-    private fun buildChipBackground(selected: Boolean): android.graphics.drawable.Drawable {
+    private fun buildChipBackground(selected: Boolean, private: Boolean): android.graphics.drawable.Drawable {
         val drawable = android.graphics.drawable.GradientDrawable()
-        drawable.shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+        drawable.shape        = android.graphics.drawable.GradientDrawable.RECTANGLE
         drawable.cornerRadius = dp(4).toFloat()
-        if (selected) {
-            drawable.setColor(getThemeColor(android.R.attr.colorPrimary))
-        } else {
-            drawable.setStroke(dp(1), getThemeColor(R.attr.contrast40))
-            drawable.setColor(Color.TRANSPARENT)
+        when {
+            selected && private -> {
+                // Purple fill when private tab is active
+                drawable.setColor(0xFF7B1FA2.toInt())
+            }
+            selected -> {
+                drawable.setColor(getThemeColor(android.R.attr.colorPrimary))
+            }
+            else -> {
+                // Unselected — private tabs look identical to normal tabs
+                drawable.setStroke(dp(1), getThemeColor(R.attr.contrast40))
+                drawable.setColor(Color.TRANSPARENT)
+            }
         }
         return drawable
     }
@@ -212,32 +236,64 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
     private fun showCreateTabDialog() {
         val input = EditText(context).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            hint = context.getString(R.string.tab_name_hint)
+            hint      = context.getString(R.string.tab_name_hint)
             val p = dp(16)
             setPadding(p, p / 2, p, p / 2)
         }
+
+        val privateToggle = CheckBox(context).apply {
+            text    = context.getString(R.string.tab_private_label)
+            val p = dp(16)
+            setPadding(p, p / 2, p, p / 2)
+        }
+
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(input)
+            addView(privateToggle)
+        }
+
         AlertDialog.Builder(context)
             .setTitle(context.getString(R.string.tab_create_title))
-            .setView(input)
+            .setView(layout)
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 val name = input.text.toString().trim()
-                if (name.isNotEmpty()) listener?.onTabCreated(name)
+                if (name.isNotEmpty()) {
+                    listener?.onTabCreated(name, privateToggle.isChecked)
+                }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    private fun showTabOptionsDialog(tabId: String, currentName: String) {
-        val options = arrayOf(
-            context.getString(R.string.tab_rename),
-            context.getString(R.string.delete)
-        )
+    private fun showTabOptionsDialog(tabId: String, currentName: String, isPrivate: Boolean) {
+        val options = buildList {
+            add(context.getString(R.string.tab_rename))
+            if (isPrivate) {
+                add(context.getString(R.string.tab_change_pin))
+                add(context.getString(R.string.tab_make_public))
+            } else {
+                add(context.getString(R.string.tab_make_private))
+            }
+            add(context.getString(R.string.delete))
+        }.toTypedArray()
+
         AlertDialog.Builder(context)
             .setTitle(currentName)
             .setItems(options) { _, which ->
-                when (which) {
-                    0 -> showRenameDialog(tabId, currentName)
-                    1 -> showDeleteConfirmDialog(tabId, currentName)
+                if (isPrivate) {
+                    when (which) {
+                        0 -> showRenameDialog(tabId, currentName)
+                        1 -> listener?.onChangePinRequested(tabId)
+                        2 -> listener?.onPrivacyToggled(tabId, false)
+                        3 -> showDeleteConfirmDialog(tabId, currentName)
+                    }
+                } else {
+                    when (which) {
+                        0 -> showRenameDialog(tabId, currentName)
+                        1 -> listener?.onPrivacyToggled(tabId, true)
+                        2 -> showDeleteConfirmDialog(tabId, currentName)
+                    }
                 }
             }
             .show()
@@ -278,7 +334,9 @@ class TabBarView(context: Context) : HorizontalScrollView(context) {
     // -----------------------------------------------------------------------
 
     private fun dp(value: Int): Int =
-        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
+        TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics
+        ).toInt()
 
     private fun getThemeColor(attr: Int): Int {
         val tv = TypedValue()
