@@ -60,13 +60,20 @@ class HabitGroupCardView(
     private var tabDot: android.view.View
 
     var showTabDot: Boolean = false
-        set(value) {
-            field = value
-            habitGroup?.let { refreshTabDot(it.tabId) }
-        }
+        set(value) { field = value; habitGroup?.let { refreshTabDot(it.tabId) } }
+
+    /** When true, dot is purple (private tab). When false, dot is cyan (normal tab). */
+    var isPrivateTab: Boolean = false
+        set(value) { field = value; habitGroup?.let { refreshTabDot(it.tabId) } }
 
     private fun refreshTabDot(tabId: String?) {
-        tabDot.visibility = if (showTabDot && tabId != null) android.view.View.VISIBLE else android.view.View.GONE
+        if (showTabDot && tabId != null) {
+            tabDot.visibility = android.view.View.VISIBLE
+            val color = if (isPrivateTab) 0xFF7B1FA2.toInt() else 0xFF26C6DA.toInt()
+            (tabDot.background as? android.graphics.drawable.GradientDrawable)?.setColor(color)
+        } else {
+            tabDot.visibility = android.view.View.GONE
+        }
     }
 
     private var currentToggleTaskId = 0

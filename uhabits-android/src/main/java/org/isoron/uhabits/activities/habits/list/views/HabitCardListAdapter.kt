@@ -87,15 +87,50 @@ class HabitCardListAdapter @Inject constructor(
             observable.notifyListeners()
         }
 
-    /** Sorted list of real cache positions that pass the active tab filter. */
+    /**
+     * IDs of tabs marked as private. Items belonging to these tabs are hidden
+     * from the "All" tab so private habits never surface unguarded.
+     * Update this set whenever tabs are created, deleted, or their privacy
+     * flag changes.
+     */
+    @SuppressLint("NotifyDataSetChanged")
+    var privateTabIds: Set<String> = emptySet()
+        set(value) {
+            field = value
+            rebuildFilteredPositions()
+            notifyDataSetChanged()
+            observable.notifyListeners()
+        }
+
+    /**
+     * Private tab IDs the user has authenticated for on the "All" tab.
+     * Items whose tabId is in this set ARE shown on All (with a purple dot).
+     * Items in [privateTabIds] but NOT here remain hidden.
+     * Cleared whenever the user leaves the All tab or the app is backgrounded.
+     */
+    @SuppressLint("NotifyDataSetChanged")
+    var unlockedPrivateTabIds: Set<String> = emptySet()
+        set(value) {
+            field = value
+            rebuildFilteredPositions()
+            notifyDataSetChanged()
+            observable.notifyListeners()
+        }
+
+    /** True whenever any position-based filtering is needed. */
+    private val isFilterActive: Boolean
+        get() = activeTabId != null || privateTabIds.isNotEmpty() || unlockedPrivateTabIds.isNotEmpty()
+
+    /** Sorted list of real cache positions that pass the active filter. */
     private var filteredPositions: List<Int> = emptyList()
 
     private fun rebuildFilteredPositions() {
-        val tabId = activeTabId
-        if (tabId == null) {
+        if (!isFilterActive) {
             filteredPositions = emptyList()
             return
         }
+
+        val tabId = activeTabId
 
         // Build a map of groupId -> tabId for all groups in the cache so child
         // habits can inherit their parent's tab assignment in O(1).
@@ -114,17 +149,37 @@ class HabitCardListAdapter @Inject constructor(
                     groupTabIds[habit.groupId] ?: habit.tabId
                 else
                     habit.tabId
-                if (effectiveTabId == tabId) result.add(i)
+
+                val passes = if (tabId != null) {
+                    // Specific tab: show only items assigned to this tab
+                    effectiveTabId == tabId
+                } else {
+                    // "All" tab: hide private items unless user authenticated for them
+                    if (effectiveTabId == null) true
+                    else if (!privateTabIds.contains(effectiveTabId)) true
+                    else unlockedPrivateTabIds.contains(effectiveTabId)
+                }
+                if (passes) result.add(i)
             } else {
                 val group = cache.getHabitGroupByPosition(i)
-                if (group != null && group.tabId == tabId) result.add(i)
+                if (group != null) {
+                    val passes = if (tabId != null) {
+                        group.tabId == tabId
+                    } else {
+                        // "All" tab: hide private groups unless user authenticated for them
+                        if (group.tabId == null) true
+                        else if (!privateTabIds.contains(group.tabId)) true
+                        else unlockedPrivateTabIds.contains(group.tabId)
+                    }
+                    if (passes) result.add(i)
+                }
             }
         }
         filteredPositions = result
     }
 
     private fun virtualToReal(virtualPos: Int): Int =
-        if (activeTabId == null) virtualPos else filteredPositions[virtualPos]
+        if (!isFilterActive) virtualPos else filteredPositions[virtualPos]
 
     override fun atMidnight() {
         cache.refreshAllHabits()
@@ -181,7 +236,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun getItemCount(): Int =
-        if (activeTabId == null) cache.itemCount else filteredPositions.size
+        if (!isFilterActive) cache.itemCount else filteredPositions.size
 
     override fun getItemId(position: Int): Long {
         return cache.getIdByPosition(virtualToReal(position))!!
@@ -224,13 +279,19 @@ class HabitCardListAdapter @Inject constructor(
             val notes = cache.getNotes(habit.id!!)
             val selected = selectedHabits.contains(habit)
             val cardView = listView!!.bindCardView(holder, habit, score, checkmarks, notes, selected)
-            (cardView as? HabitCardView)?.showTabDot = showTabDot
+            (cardView as? HabitCardView)?.also {
+                it.showTabDot  = showTabDot
+                it.isPrivateTab = habit.tabId != null && unlockedPrivateTabIds.contains(habit.tabId)
+            }
         } else {
             val habitGroup = cache.getHabitGroupByPosition(realPos)
             val score = cache.getScore(habitGroup!!.id!!)
             val selected = selectedHabitGroups.contains(habitGroup)
             val cardView = listView!!.bindGroupCardView(holder, habitGroup, score, selected)
-            (cardView as? HabitGroupCardView)?.showTabDot = showTabDot
+            (cardView as? HabitGroupCardView)?.also {
+                it.showTabDot  = showTabDot
+                it.isPrivateTab = habitGroup.tabId != null && unlockedPrivateTabIds.contains(habitGroup.tabId)
+            }
         }
     }
 
@@ -273,7 +334,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemChanged(position: Int) {
-        if (activeTabId != null) {
+        if (isFilterActive) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         } else {
@@ -283,7 +344,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemInserted(position: Int) {
-        if (activeTabId != null) {
+        if (isFilterActive) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         } else {
@@ -293,7 +354,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemMoved(oldPosition: Int, newPosition: Int) {
-        if (activeTabId != null) {
+        if (isFilterActive) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         } else {
@@ -303,7 +364,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onItemRemoved(position: Int) {
-        if (activeTabId != null) {
+        if (isFilterActive) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         } else {
@@ -313,7 +374,7 @@ class HabitCardListAdapter @Inject constructor(
     }
 
     override fun onRefreshFinished() {
-        if (activeTabId != null) {
+        if (isFilterActive) {
             rebuildFilteredPositions()
             notifyDataSetChanged()
         }

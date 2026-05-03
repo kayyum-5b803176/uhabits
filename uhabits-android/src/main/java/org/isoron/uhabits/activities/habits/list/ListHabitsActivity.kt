@@ -131,9 +131,11 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
             component.listHabitsSelectionMenu.isOnCustomTab = (restoredActiveTabId != null)
             adapter.activeTabId = restoredActiveTabId
             adapter.showTabDot  = (restoredActiveTabId == null)
+            syncPrivateTabIds()
         }
         setupTabBar()
         setupMoveToTabCallback()
+        syncPrivateTabIds()          // initial wiring so All-tab hides private items immediately
         lastKnownMaxId = maxOf(
             appComponent.habitList.maxByOrNull { it.id ?: Long.MIN_VALUE }?.id ?: Long.MIN_VALUE,
             appComponent.habitGroupList.maxByOrNull { it.id ?: Long.MIN_VALUE }?.id ?: Long.MIN_VALUE
@@ -246,6 +248,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
 
         // Switch away from private immediately — don't show private content before auth
         switchToTab(fallbackTabId, stealth = false)
+        // Also revoke the All-tab unlock — user must re-auth if they go back to "All"
+        adapter.unlockedPrivateTabIds = emptySet()
 
         // Try to re-auth; on success go back to the private tab
         if (privateTabId != null && tabManager.getTab(privateTabId)?.isPrivate == true) {
@@ -281,6 +285,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         } else {
             // "All" tab as safe default (private tabs need auth before display)
             adapter.showTabDot = true
+            // Defer All-tab auth until after the listener is wired up (post to message queue)
+            rootView.post { handleAllTabPrivateAuth() }
         }
 
         rootView.tabBar.listener = object : TabBarView.Listener {
@@ -295,6 +301,14 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
                 component.listHabitsSelectionMenu.isOnCustomTab = (tabId != null)
                 adapter.activeTabId = tabId
                 adapter.showTabDot  = (tabId == null)
+
+                if (tabId == null) {
+                    // Switched to "All" tab — ask for auth if private tabs exist
+                    handleAllTabPrivateAuth()
+                } else {
+                    // Left "All" tab — revoke the All-tab unlock
+                    adapter.unlockedPrivateTabIds = emptySet()
+                }
             }
 
             // ------ Private tab tapped — auth gate ------
@@ -344,6 +358,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
                 component.listHabitsSelectionMenu.isOnCustomTab = false
                 adapter.activeTabId = null
                 adapter.showTabDot  = true
+                adapter.unlockedPrivateTabIds = emptySet()
+                syncPrivateTabIds()
                 rootView.tabBar.setTabs(tabManager.getAllTabs())
             }
 
@@ -356,10 +372,12 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
                     // Becoming public — just clear the flag, disable stealth if active
                     tabManager.setTabPrivate(tabId, false)
                     if (adapter.activeTabId == tabId) authManager.disableStealthMode()
+                    adapter.unlockedPrivateTabIds = adapter.unlockedPrivateTabIds - tabId
+                    syncPrivateTabIds()
                     rootView.tabBar.setTabs(tabManager.getAllTabs())
-                    // If no private tabs remain, clear the stored PIN
-                    if (!tabManager.hasAnyPrivateTab()) tabManager.clearPin()
                 }
+                // If no private tabs remain, clear the stored PIN
+                if (!tabManager.hasAnyPrivateTab()) tabManager.clearPin()
             }
 
             // ------ Change PIN ------
@@ -423,6 +441,9 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
     private fun ensurePinAndMakePrivate(tabId: String) {
         val applyPrivate = {
             tabManager.setTabPrivate(tabId, true)
+            syncPrivateTabIds()
+            // Revoke All-tab unlock — user must re-auth to see the newly private items
+            if (adapter.activeTabId == null) adapter.unlockedPrivateTabIds = emptySet()
             rootView.tabBar.setTabs(tabManager.getAllTabs())
         }
 
@@ -453,6 +474,43 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         component.listHabitsSelectionMenu.isOnCustomTab = (tabId != null)
         adapter.activeTabId = tabId
         adapter.showTabDot  = (tabId == null)
+    }
+
+    /**
+     * Syncs [HabitCardListAdapter.privateTabIds] with the current DB state.
+     * Call after any tab create/delete/privacy-change operation.
+     */
+    private fun syncPrivateTabIds() {
+        adapter.privateTabIds = tabManager.getAllTabs()
+            .filter { it.isPrivate }
+            .map { it.id }
+            .toSet()
+    }
+
+    /**
+     * Called whenever the user lands on the "All" tab.
+     *
+     * If there are private tabs:
+     * - Shows biometric → PIN auth.
+     * - **Success**: unlocks all private tab IDs → their habits appear with a purple dot.
+     * - **Cancel / failure**: [unlockedPrivateTabIds] stays empty → private items hidden.
+     *
+     * If there are no private tabs, does nothing.
+     */
+    private fun handleAllTabPrivateAuth() {
+        val privateIds = tabManager.getAllTabs().filter { it.isPrivate }.map { it.id }.toSet()
+        if (privateIds.isEmpty()) {
+            adapter.unlockedPrivateTabIds = emptySet()
+            return
+        }
+        authManager.authenticate(
+            onSuccess = {
+                adapter.unlockedPrivateTabIds = privateIds
+            },
+            onFailure = {
+                adapter.unlockedPrivateTabIds = emptySet()
+            }
+        )
     }
 
     // -----------------------------------------------------------------------

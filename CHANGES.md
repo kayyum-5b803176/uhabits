@@ -1,16 +1,36 @@
-# Fix: Private tab chip visual tweaks
+# Fix: IndexOutOfBoundsException (same crash, deeper cause)
 **Date:** 20260503
 
-## Changes
+## Root cause (real one)
+The previous fix aligned `getItemCount()` with `isFilterActive`, but the five
+cache listener callbacks (`onItemChanged`, `onItemInserted`, `onItemMoved`,
+`onItemRemoved`, `onRefreshFinished`) still used `activeTabId != null` as their
+guard for calling `rebuildFilteredPositions()`.
 
-| Type | File |
-|------|------|
-| ✏️ Modified | `uhabits-android/src/main/java/org/isoron/uhabits/activities/habits/list/tabs/TabBarView.kt` |
+Timeline of the crash:
+1. `syncPrivateTabIds()` sets `privateTabIds` → `isFilterActive = true`
+   → `rebuildFilteredPositions()` runs but cache is empty → `filteredPositions = []`
+2. Cache finishes loading → `onRefreshFinished()` fires
+   → `activeTabId == null` so **no rebuild** → `filteredPositions` stays `[]`
+3. RecyclerView calls `getItemCount()` → `filteredPositions.size = 0`
+   — but a pending `notifyItemInserted(N)` from the cache load already told
+   RecyclerView there are N items → stale internal count
+4. `getItemViewType(0)` → `virtualToReal(0)` → `filteredPositions[0]` → crash
 
-## What was fixed
+## Fix
+Changed all five callbacks to use `isFilterActive` instead of `activeTabId != null`:
 
-1. **No emoji** — removed the 🔒 prefix from private tab chip labels. The tab name is now shown as-is, identical to normal tabs.
+| Callback | Before | After |
+|---|---|---|
+| `onItemChanged` | `activeTabId != null` | `isFilterActive` |
+| `onItemInserted` | `activeTabId != null` | `isFilterActive` |
+| `onItemMoved` | `activeTabId != null` | `isFilterActive` |
+| `onItemRemoved` | `activeTabId != null` | `isFilterActive` |
+| `onRefreshFinished` | `activeTabId != null` | `isFilterActive` |
 
-2. **No purple outline** — unselected private tab chips now use the same border colour (`contrast40`) as every other unselected chip, so they blend in completely.
+Whenever any filter is active (tab filter OR private-tab hiding), all cache
+mutations now go through `rebuildFilteredPositions() + notifyDataSetChanged()`
+so `filteredPositions` is always in sync with the count RecyclerView sees.
 
-3. **Purple background only when selected** — the only visual difference retained is the purple (`#7B1FA2`) filled background when a private tab is the *active* selection (vs the theme primary colour for normal selected tabs).
+## Changed file
+- `uhabits-android/src/main/java/org/isoron/uhabits/activities/habits/list/views/HabitCardListAdapter.kt`
