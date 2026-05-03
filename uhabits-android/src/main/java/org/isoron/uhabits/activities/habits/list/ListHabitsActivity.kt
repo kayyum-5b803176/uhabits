@@ -77,6 +77,13 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
      */
     private var requireReAuthOnStart: Boolean = false
 
+    /**
+     * True while the current private-tab session is unlocked.
+     * Cleared in [onStop] (app leaves foreground) and after [SESSION_TIMEOUT_MS].
+     * Persisted via [PREF_LAST_AUTH_MS] so it survives process death correctly.
+     */
+    private var isPrivateSessionUnlocked: Boolean = false
+
     /** Snapshot of the highest habit/group id seen at [onPause]. */
     private var lastKnownMaxId: Long = Long.MIN_VALUE
 
@@ -123,6 +130,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         // ---- Tab feature ----
         tabManager  = TabManager(this)
         authManager = PrivateTabAuthManager(this, tabManager)
+        authManager.onForgotPin = { deleteAllPrivateData() }
         screen.tabManager = tabManager
         screen.onImportSuccess = {
             rootView.tabBar.setTabs(tabManager.getAllTabs())
@@ -151,11 +159,16 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
 
     override fun onStart() {
         super.onStart()
-        // Recover "was private tab active when the user left?" flag from SharedPreferences
-        // (survives process death, unlike in-memory fields)
         requireReAuthOnStart = privateTabPrefs.getBoolean(PREF_WAS_PRIVATE_ACTIVE, false)
         if (requireReAuthOnStart) {
             privateTabPrefs.edit().putBoolean(PREF_WAS_PRIVATE_ACTIVE, false).apply()
+        }
+
+        // Check if the 15-min session window has expired while the app was in background
+        val lastAuthMs = privateTabPrefs.getLong(PREF_LAST_AUTH_MS, 0L)
+        val elapsed    = System.currentTimeMillis() - lastAuthMs
+        if (elapsed > SESSION_TIMEOUT_MS) {
+            isPrivateSessionUnlocked = false
         }
     }
 
@@ -165,10 +178,14 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         val isPrivateNow = currentTab?.isPrivate == true
 
         if (isPrivateNow) {
-            // Persist the flag so the re-auth check survives process death
             privateTabPrefs.edit().putBoolean(PREF_WAS_PRIVATE_ACTIVE, true).apply()
-            // Disable stealth here so the recents thumbnail is already hidden by FLAG_SECURE
         }
+
+        // Revoke the in-memory session flag — re-auth is required on next foreground entry
+        // unless the user returns within SESSION_TIMEOUT_MS.
+        isPrivateSessionUnlocked = false
+        adapter.unlockedPrivateTabIds = emptySet()
+
         super.onStop()
     }
 
@@ -255,6 +272,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
         if (privateTabId != null && tabManager.getTab(privateTabId)?.isPrivate == true) {
             authManager.authenticate(
                 onSuccess = {
+                    isPrivateSessionUnlocked = true
+                    stampAuthTime()
                     switchToTab(privateTabId, stealth = true)
                     tabManager.saveActiveTab(privateTabId)
                 },
@@ -319,6 +338,8 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
 
                 authManager.authenticate(
                     onSuccess = {
+                        isPrivateSessionUnlocked = true
+                        stampAuthTime()
                         switchToTab(tabId, stealth = true)
                         tabManager.saveActiveTab(tabId)
                     },
@@ -382,10 +403,19 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
 
             // ------ Change PIN ------
             override fun onChangePinRequested(tabId: String) {
-                authManager.showPinSetup(
-                    onPinSet = { newPin ->
-                        tabManager.savePin(newPin)
-                    }
+                // Must verify existing PIN (or biometric) before allowing a change
+                authManager.authenticate(
+                    onSuccess = {
+                        authManager.showPinSetup(
+                            onPinSet = { newPin ->
+                                tabManager.savePin(newPin)
+                                // A new PIN means the session is freshly verified
+                                isPrivateSessionUnlocked = true
+                                stampAuthTime()
+                            }
+                        )
+                    },
+                    onFailure = { /* user cancelled — do nothing */ }
                 )
             }
         }
@@ -490,12 +520,11 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
     /**
      * Called whenever the user lands on the "All" tab.
      *
-     * If there are private tabs:
-     * - Shows biometric → PIN auth.
-     * - **Success**: unlocks all private tab IDs → their habits appear with a purple dot.
-     * - **Cancel / failure**: [unlockedPrivateTabIds] stays empty → private items hidden.
+     * Skips auth if the session is still valid (unlocked within the last 15 min
+     * and app hasn't left the foreground since the last auth).
      *
-     * If there are no private tabs, does nothing.
+     * On success: stamps the session, unlocks all private tab IDs.
+     * On cancel / failure: [unlockedPrivateTabIds] stays empty → private items hidden.
      */
     private fun handleAllTabPrivateAuth() {
         val privateIds = tabManager.getAllTabs().filter { it.isPrivate }.map { it.id }.toSet()
@@ -503,14 +532,64 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
             adapter.unlockedPrivateTabIds = emptySet()
             return
         }
+
+        // Session still valid — no need to re-auth
+        if (isPrivateSessionUnlocked) {
+            adapter.unlockedPrivateTabIds = privateIds
+            return
+        }
+
         authManager.authenticate(
             onSuccess = {
+                isPrivateSessionUnlocked = true
+                stampAuthTime()
                 adapter.unlockedPrivateTabIds = privateIds
             },
             onFailure = {
                 adapter.unlockedPrivateTabIds = emptySet()
             }
         )
+    }
+
+    /** Records the current time as the last successful auth timestamp. */
+    private fun stampAuthTime() {
+        privateTabPrefs.edit()
+            .putLong(PREF_LAST_AUTH_MS, System.currentTimeMillis())
+            .apply()
+    }
+
+    /**
+     * Deletes all private tabs and every habit/group linked to them, then
+     * clears the PIN.  Called by [PrivateTabAuthManager.onForgotPin].
+     */
+    private fun deleteAllPrivateData() {
+        val privateTabs = tabManager.getAllTabs().filter { it.isPrivate }
+
+        privateTabs.forEach { tab ->
+            // Delete habits linked to this private tab
+            val habitsToDelete = appComponent.habitList.filter { it.tabId == tab.id }
+            habitsToDelete.forEach { appComponent.habitList.remove(it) }
+
+            // Delete groups (and their children) linked to this private tab
+            val groupsToDelete = appComponent.habitGroupList.filter { it.tabId == tab.id }
+            groupsToDelete.forEach { group ->
+                group.habitList.toList().forEach { appComponent.habitList.remove(it) }
+                appComponent.habitGroupList.remove(group)
+            }
+
+            tabManager.deleteTab(tab.id)
+        }
+
+        tabManager.clearPin()
+        isPrivateSessionUnlocked = false
+        adapter.unlockedPrivateTabIds = emptySet()
+        syncPrivateTabIds()
+        authManager.disableStealthMode()
+
+        // Switch to "All" tab (safe fallback after deletion)
+        switchToTab(null, stealth = false)
+        tabManager.saveActiveTab(null)
+        rootView.tabBar.setTabs(tabManager.getAllTabs())
     }
 
     // -----------------------------------------------------------------------
@@ -737,5 +816,11 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener, CommandRun
 
         /** SharedPreferences key: was a private tab active when the user left? */
         private const val PREF_WAS_PRIVATE_ACTIVE = "was_private_tab_active"
+
+        /** SharedPreferences key: epoch-ms when the user last successfully authenticated. */
+        private const val PREF_LAST_AUTH_MS = "last_auth_timestamp_ms"
+
+        /** How long (ms) the private-tab unlock stays valid without re-auth. */
+        private const val SESSION_TIMEOUT_MS = 15 * 60 * 1000L   // 15 minutes
     }
 }

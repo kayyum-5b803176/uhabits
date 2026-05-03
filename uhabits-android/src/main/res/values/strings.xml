@@ -56,6 +56,10 @@
     <string name="private_tab_pin_too_short">PIN must be exactly 4 digits.</string>
     <string name="private_tab_pin_wrong">Incorrect PIN. Please try again.</string>
     <string name="private_tab_pin_mismatch">PINs don\'t match. Please try again.</string>
+    <string name="private_tab_forgot_pin">Forgot PIN?</string>
+    <string name="private_tab_forgot_pin_warning">This will permanently delete all private tabs and every habit inside them. This cannot be undone.\n\nContinue?</string>
+    <string name="private_tab_reset_and_delete">Delete &amp; Reset</string>
+    <string name="private_tab_change_pin_verify">Verify current PIN before setting a new one.</string>
     <string name="add_habit">Add habit</string>
     <string name="color_picker_default_title">Change color</string>
     <string name="toast_habit_created">Habit created</string>

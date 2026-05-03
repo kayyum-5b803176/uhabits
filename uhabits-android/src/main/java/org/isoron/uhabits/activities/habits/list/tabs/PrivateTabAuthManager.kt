@@ -1,6 +1,5 @@
 package org.isoron.uhabits.activities.habits.list.tabs
 
-import android.content.Context
 import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
@@ -24,14 +23,24 @@ import org.isoron.uhabits.R
  * 3. On PIN success → [onSuccess] is invoked on the main thread.
  * 4. On PIN failure or cancel → [onFailure] is invoked.
  *
+ * The PIN entry dialog also exposes a "Forgot PIN?" path that, after a
+ * confirmation warning, invokes [onForgotPin] so the caller can delete all
+ * private-tab data before clearing the PIN.
+ *
  * Stealth mode (FLAG_SECURE) is applied to the activity window while a
- * private tab is open, preventing screenshots and the recent-apps thumbnail
- * from revealing private habit data.
+ * private tab is open, preventing screenshots and the recent-apps thumbnail.
  */
 class PrivateTabAuthManager(
     private val activity: FragmentActivity,
     private val tabManager: TabManager
 ) {
+
+    /**
+     * Called when the user confirms "Forgot PIN?" on the PIN entry dialog.
+     * The caller is responsible for deleting all private-tab habits/groups
+     * and tabs, then calling [TabManager.clearPin].
+     */
+    var onForgotPin: (() -> Unit)? = null
 
     // -----------------------------------------------------------------------
     // Public API
@@ -43,7 +52,6 @@ class PrivateTabAuthManager(
      */
     fun authenticate(onSuccess: () -> Unit, onFailure: () -> Unit) {
         if (!tabManager.hasPin()) {
-            // No PIN set — treat as not locked (shouldn't happen in normal use)
             onSuccess()
             return
         }
@@ -71,12 +79,10 @@ class PrivateTabAuthManager(
     // Stealth mode
     // -----------------------------------------------------------------------
 
-    /** Prevents screenshots and the recent-apps thumbnail for the activity window. */
     fun enableStealthMode() {
         activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
 
-    /** Restores normal screenshot / recents behaviour. */
     fun disableStealthMode() {
         activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
@@ -108,24 +114,14 @@ class PrivateTabAuthManager(
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 when (errorCode) {
-                    BiometricPrompt.ERROR_NEGATIVE_BUTTON -> {
-                        // User tapped "Use PIN"
-                        onFallback()
-                    }
+                    BiometricPrompt.ERROR_NEGATIVE_BUTTON -> onFallback()
                     BiometricPrompt.ERROR_USER_CANCELED,
-                    BiometricPrompt.ERROR_CANCELED -> {
-                        onCancel()
-                    }
-                    else -> {
-                        // Hardware error or lockout — fall back to PIN
-                        onFallback()
-                    }
+                    BiometricPrompt.ERROR_CANCELED        -> onCancel()
+                    else                                  -> onFallback()
                 }
             }
 
-            override fun onAuthenticationFailed() {
-                // Wrong biometric — the system dialog stays open, no action needed
-            }
+            override fun onAuthenticationFailed() { /* system dialog stays open */ }
         }
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
@@ -138,12 +134,11 @@ class PrivateTabAuthManager(
     }
 
     // -----------------------------------------------------------------------
-    // PIN entry
+    // PIN entry  (with "Forgot PIN?" neutral button)
     // -----------------------------------------------------------------------
 
     private fun showPinEntry(onSuccess: () -> Unit, onFailure: () -> Unit) {
-        val input = buildPinField()
-        var dialog: AlertDialog? = null
+        val input      = buildPinField()
         val errorLabel = buildErrorLabel()
 
         val layout = LinearLayout(activity).apply {
@@ -154,17 +149,21 @@ class PrivateTabAuthManager(
             addView(errorLabel)
         }
 
+        var dialog: AlertDialog? = null
+
         dialog = AlertDialog.Builder(activity)
             .setTitle(R.string.private_tab_enter_pin)
             .setView(layout)
             .setCancelable(true)
-            .setPositiveButton(android.R.string.ok, null)   // override below to control dismiss
+            .setPositiveButton(android.R.string.ok, null)
             .setNegativeButton(android.R.string.cancel) { _, _ -> onFailure() }
+            .setNeutralButton(R.string.private_tab_forgot_pin, null)   // wired below
             .setOnCancelListener { onFailure() }
             .create()
 
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            // OK — verify PIN
+            dialog!!.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val pin = input.text.toString()
                 when {
                     pin.length != 4 -> {
@@ -173,7 +172,7 @@ class PrivateTabAuthManager(
                         input.text?.clear()
                     }
                     tabManager.verifyPin(pin) -> {
-                        dialog.dismiss()
+                        dialog!!.dismiss()
                         onSuccess()
                     }
                     else -> {
@@ -183,6 +182,12 @@ class PrivateTabAuthManager(
                     }
                 }
             }
+
+            // Forgot PIN? — confirm then delete
+            dialog!!.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                dialog!!.dismiss()
+                showForgotPinConfirm(onCancelled = onFailure)
+            }
         }
 
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
@@ -190,11 +195,27 @@ class PrivateTabAuthManager(
     }
 
     // -----------------------------------------------------------------------
-    // PIN setup (2-pass)
+    // Forgot PIN — destructive reset
+    // -----------------------------------------------------------------------
+
+    private fun showForgotPinConfirm(onCancelled: () -> Unit) {
+        AlertDialog.Builder(activity)
+            .setTitle(R.string.private_tab_forgot_pin)
+            .setMessage(R.string.private_tab_forgot_pin_warning)
+            .setPositiveButton(R.string.private_tab_reset_and_delete) { _, _ ->
+                onForgotPin?.invoke()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> onCancelled() }
+            .setOnCancelListener { onCancelled() }
+            .show()
+    }
+
+    // -----------------------------------------------------------------------
+    // PIN setup (2-pass confirm)
     // -----------------------------------------------------------------------
 
     private fun showPinSetupDialog(onPinSet: (String) -> Unit, onCancel: () -> Unit) {
-        val input     = buildPinField()
+        val input      = buildPinField()
         val errorLabel = buildErrorLabel()
 
         val layout = LinearLayout(activity).apply {
@@ -217,14 +238,14 @@ class PrivateTabAuthManager(
             .create()
 
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dialog!!.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val pin = input.text.toString()
                 if (pin.length != 4) {
                     errorLabel.text = activity.getString(R.string.private_tab_pin_too_short)
                     errorLabel.visibility = android.view.View.VISIBLE
                     input.text?.clear()
                 } else {
-                    dialog.dismiss()
+                    dialog!!.dismiss()
                     showPinConfirm(firstPin = pin, onPinSet = onPinSet, onCancel = onCancel)
                 }
             }
@@ -257,7 +278,7 @@ class PrivateTabAuthManager(
             .create()
 
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dialog!!.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val confirm = input.text.toString()
                 when {
                     confirm.length != 4 -> {
@@ -266,7 +287,7 @@ class PrivateTabAuthManager(
                         input.text?.clear()
                     }
                     confirm == firstPin -> {
-                        dialog.dismiss()
+                        dialog!!.dismiss()
                         onPinSet(confirm)
                     }
                     else -> {
@@ -296,11 +317,9 @@ class PrivateTabAuthManager(
     }
 
     private fun buildErrorLabel(): TextView = TextView(activity).apply {
-        setTextColor(
-            ContextCompat.getColor(activity, android.R.color.holo_red_light)
-        )
-        textSize  = 13f
-        gravity   = Gravity.CENTER
+        setTextColor(ContextCompat.getColor(activity, android.R.color.holo_red_light))
+        textSize   = 13f
+        gravity    = Gravity.CENTER
         setPadding(0, dp(6), 0, 0)
         visibility = android.view.View.GONE
     }
